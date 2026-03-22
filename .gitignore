@@ -1,0 +1,22 @@
+# Audio files
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.aac
+*.m4a
+
+# Temp chunks
+_temp_chunks/
+
+# FFmpeg binaries (too large for git)
+ffmpeg.exe
+ffprobe.exe
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+Thumbs.db
+.DS_Store
