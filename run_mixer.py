@@ -166,6 +166,46 @@ def detect_silences_parallel(filepath, total_duration):
     return merged
 
 
+def load_manual_cuts(filepath):
+    """Ищет и загружает все json-файлы с ручными вырезами для данного трека."""
+    cuts = []
+    pattern = f"{filepath.stem}_manual_cuts*.json"
+    
+    for manual_path in filepath.parent.glob(pattern):
+        try:
+            with open(manual_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                count = 0
+                for c in data:
+                    st = float(c["start"])
+                    en = float(c["end"])
+                    cuts.append((st, en, en - st))
+                    count += 1
+                print(f"  📥 Загружено ручных вырезов: {count} из файла {manual_path.name}")
+        except Exception as e:
+            print(f"  ⚠ Ошибка чтения ручных вырезов {manual_path.name}: {e}")
+            
+    return cuts
+
+
+def get_combined_silences(filepath, dur, original_file):
+    """Получает автоматические вырезы и сливает их с ручными из JSON."""
+    silences = detect_silences_parallel(filepath, dur)
+    manual = load_manual_cuts(original_file if original_file else filepath)
+    if manual:
+        silences.extend(manual)
+        # Сортируем и заново мерджим накладывающиеся куски
+        silences.sort(key=lambda x: x[0])
+        merged = []
+        for s in silences:
+            if merged and s[0] <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], s[1]), max(merged[-1][1], s[1]) - merged[-1][0])
+            else:
+                merged.append(s)
+        return merged
+    return silences
+
+
 def _get_rms_at(filepath, position, duration=0.5):
     """Замер средней громкости (RMS) в точке файла."""
     cmd = [
@@ -283,10 +323,45 @@ def analyze_volume_segments(filepath, total_duration, num_segments=12):
     return results
 
 
+def check_ffmpeg():
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        print("Ошибка: ffmpeg или ffprobe не найдены в системе.")
+        print("Установите их (например, через winget install ffmpeg) и добавьте в PATH.")
+        sys.exit(1)
+
+
+def backup_source_files(input_file):
+    """Создает резервную копию оригинального трека и всех JSON с вырезами."""
+    backup_base = input_file.parent.parent / "Исходники"
+    backup_dir = backup_base / input_file.stem
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    
+    copied_something = False
+    
+    # Бэкап оригинального аудио
+    dest_audio = backup_dir / input_file.name
+    if not dest_audio.exists() or dest_audio.stat().st_size != input_file.stat().st_size:
+        print(f"  💾 Бэкап оригинала: {input_file.name} -> Исходники/{input_file.stem}/")
+        shutil.copy2(input_file, dest_audio)
+        copied_something = True
+        
+    # Бэкап JSON файлов с маркёрами
+    pattern = f"{input_file.stem}_manual_cuts*.json"
+    for manual_path in input_file.parent.glob(pattern):
+        dest_json = backup_dir / manual_path.name
+        if not dest_json.exists() or dest_json.stat().st_mtime < manual_path.stat().st_mtime:
+            print(f"  💾 Бэкап разметки: {manual_path.name}")
+            shutil.copy2(manual_path, dest_json)
+            copied_something = True
+            
+    if copied_something:
+        print("  ✅ Бэкап актуализирован.\n")
+
+
 # ============================================
 #                 ANALYZE
 # ============================================
-def analyze_track(filepath):
+def analyze_track(filepath, original_file=None):
     print("\n" + "=" * 55)
     print("   🎵 АНАЛИЗ ТРЕКА")
     print("=" * 55)
@@ -343,7 +418,7 @@ def analyze_track(filepath):
     print(f"  🔇 ПОИСК ПАУЗ (порог {SILENCE_THRESH} dB, мин. {MIN_SILENCE_LEN} сек)")
     print(f"{'─' * 55}")
     
-    silences = detect_silences_parallel(filepath, dur)
+    silences = get_combined_silences(filepath, dur, original_file)
     
     if silences:
         total_sil = sum(s[2] for s in silences)
@@ -437,6 +512,7 @@ def _process_chunk(args):
 
 
 def process_mix(filepath, output_filename, original_file=None):
+    proc_t0 = time.time()  # Фиксируем время старта для статистики
     print("\n" + "=" * 55)
     print("   🔧 ОБРАБОТКА МИКСА")
     print("=" * 55)
@@ -446,9 +522,9 @@ def process_mix(filepath, output_filename, original_file=None):
     print(f"  Файл: {filepath.name} ({fmt(dur)})")
     
     # 1. Поиск абсолютной тишины
-    print(f"\n📍 Шаг 1: Поиск тишины ({SILENCE_THRESH} дБ)...")
-    raw_silences = detect_silences_parallel(filepath, dur)
-    print(f"  Найдено абсолютных пауз: {len(raw_silences)}")
+    print(f"\n📍 Шаг 1: Поиск тишины ({SILENCE_THRESH} дБ) и ручные вырезы...")
+    raw_silences = get_combined_silences(filepath, dur, original_file)
+    print(f"  Найдено абсолютных пауз (с учетом ручных): {len(raw_silences)}")
     
     # 2. Расширение зон тишины (захват тихих хвостов)
     print(f"\n📍 Шаг 2: Расширение зон (захват тихих хвостов < {QUIET_THRESH} дБ)...")
@@ -624,7 +700,21 @@ def process_mix(filepath, output_filename, original_file=None):
     print(f"  Сегментов:     {len(segments)}")
     print(f"  Файл:          {output_path}")
     print(f"{'=' * 55}")
-    print("  🎉 Готово! Наушники больше не будут отключаться!")
+    print(f"  🎉 Готово! Сохранено: {output_path}")
+    print(f"  Общее время обработки: {fmt(time.time() - proc_t0)}")
+    
+    # Сигнал об окончании: запускаем файл в плеере системы
+    try:
+        if os.name == 'nt':
+            os.startfile(str(output_path))
+        elif sys.platform.startswith('linux'):
+            subprocess.Popen(['xdg-open', str(output_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', str(output_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"  ⚠ Не удалось запустить трек: {e}")
+    
+    print("\n  🎧 Наушники больше не будут отключаться!")
 
 
 # ============================================
@@ -643,8 +733,12 @@ if __name__ == "__main__":
         sys.exit(0)
     
     input_file = files[0]
-    print(f"Найден файл: {input_file.name}")
+    print("\n" + "=" * 42)
+    print(f"Найден файл: {input_file.name}\n")
     
+    backup_source_files(input_file)
+
+    # 1. Переводим в FLAC для работы
     TEMP_DIR.mkdir(exist_ok=True)
     
     if input_file.suffix.lower() in [".wav", ".flac"]:
@@ -664,7 +758,7 @@ if __name__ == "__main__":
         safe_run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"  Готово за {fmt(time.time() - t0)}")
     
-    should_process = analyze_track(working_file)
+    should_process = analyze_track(working_file, input_file)
     if should_process:
         out_name = f"[PRO] {input_file.name}"
         process_mix(working_file, out_name, input_file)

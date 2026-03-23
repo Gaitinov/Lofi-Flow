@@ -6,9 +6,13 @@
 *.aac
 *.m4a
 
-# Debug logs
+# Debug markers and logs
 debug_cuts_*.json
+*_manual_cuts*.json
 
+# Data folders
+lofi_tracks/
+Исходники/
 
 # Temp chunks
 _temp_chunks/

@@ -59,6 +59,30 @@
   <div class="timeline" id="timeline"></div>
   <div class="tooltip">🟢 Зелёный = оставлено (музыка) &nbsp; 🔴 Красный = вырезано (тишина + хвосты)</div>
 
+  <h2>✂️ Ручной монтаж (Manual Cuts)</h2>
+  <div class="info-card" style="margin-bottom:20px;">
+    <p class="tooltip" style="margin-top:0;">Слушай обработанный микс, жми <b>[</b> перед неудачным моментом, <b>]</b> - после него. Питон сам пересчитает таймкоды в оригинал!</p>
+    
+    <div style="margin: 10px 0; display:flex; gap:10px; align-items:center;">
+        <button class="play-btn" style="background:#8e44ad;" onclick="playAudio('processed', 0)">🎧 Включить обработанный микс</button>
+        <button class="play-btn" style="background:#2980b9;" onclick="playAudio('original', 0)">📀 Включить оригинал</button>
+    </div>
+
+    <div style="margin: 15px 0; display:flex; gap:10px; align-items:center;">
+        <button class="play-btn" style="background:#0f3460; font-size:1.1em;" onclick="setManualTime('start')">[ Старт: <span id="manStart">0.0</span>с</button>
+        <button class="play-btn" style="background:#0f3460; font-size:1.1em;" onclick="setManualTime('end')">] Конец: <span id="manEnd">0.0</span>с</button>
+        <button class="play-btn" style="background:#2ecc71; font-size:1.1em;" onclick="addManualCut()">➕ Добавить вырез</button>
+    </div>
+    
+    <table style="width:100%; max-width:700px; margin-top:10px;">
+      <thead><tr><th>Источник</th><th>Вырез тут</th><th>Пересчет в Оригинал</th><th>Удалить</th></tr></thead>
+      <tbody id="manualCutsBody">
+         <tr><td colspan="4" style="text-align:center; color:#888;">Нет ручных вырезов</td></tr>
+      </tbody>
+    </table>
+    <button class="play-btn" style="margin-top:15px; background:#f39c12;" onclick="exportManualCuts()">💾 Скачать ручные вырезы (.json)</button>
+  </div>
+
   <h2>🗺 Карта времени (Output → Original)</h2>
   <p class="tooltip">Слышишь пук на NN:NN? Найди тут — узнаешь тайминг в оригинале.</p>
   <div class="search-box">
@@ -277,6 +301,117 @@ function playAudio(type, timeSec) {
     audioPlayer.play().catch(e => console.error("Playback failed:", e));
   }
 }
+
+// === MANUAL CUTS LOGIC ===
+let manualCuts = [];
+let manStart = 0;
+let manEnd = 0;
+
+function setManualTime(type) {
+  const audio = document.getElementById('audioPlayer');
+  if(!audio) return;
+  const t = audio.currentTime;
+  if(type==='start') { manStart = t; document.getElementById('manStart').innerText = t.toFixed(1); }
+  else { manEnd = t; document.getElementById('manEnd').innerText = t.toFixed(1); }
+}
+
+function mapToOriginalTime(t, preferLast) {
+    if (!debugData || !debugData.time_map) return t;
+    let matches = debugData.time_map.filter(m => t >= m.output_start && t <= m.output_end);
+    
+    if (matches.length === 0) {
+        // Если попали в микро-дырочку кроссфейда
+        let closest = debugData.time_map.reduce((prev, curr) => Math.abs(curr.output_start - t) < Math.abs(prev.output_start - t) ? curr : prev);
+        let offset = t - closest.output_start;
+        return closest.original_start + offset;
+    }
+    
+    let m = preferLast ? matches[matches.length - 1] : matches[0];
+    return m.original_start + (t - m.output_start);
+}
+
+function addManualCut() {
+  if (manStart >= manEnd) { alert('Конец должен быть позже старта!'); return; }
+  
+  const audio = document.getElementById('audioPlayer');
+  const d = debugData;
+  const processedFile = d && d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
+  const encodeProc = processedFile ? encodeURI(processedFile).replace(/#/g, '%23').replace(/\?/g, '%3F') : 'UNMATCHABLE';
+  
+  const isProcessed = audio.src && audio.src.includes(encodeProc);
+  
+  let origStart, origEnd;
+  if (isProcessed) {
+      // Если слушаем обработанный, пересчитываем таймкоды через таблицу time_map
+      origStart = mapToOriginalTime(manStart, false);
+      origEnd = mapToOriginalTime(manEnd, true);
+  } else {
+      // Если слушаем оригинал, таймкоды уже "оригинальные"
+      origStart = manStart;
+      origEnd = manEnd;
+  }
+
+  manualCuts.push({
+    procStart: manStart, 
+    procEnd: manEnd,
+    start: origStart, 
+    end: origEnd, 
+    dur: origEnd - origStart,
+    isProcessed: isProcessed
+  });
+  
+  manualCuts.sort((a,b) => a.start - b.start);
+  renderManualCuts();
+}
+
+function removeManualCut(idx) {
+  manualCuts.splice(idx, 1);
+  renderManualCuts();
+}
+
+function renderManualCuts() {
+  const tbody = document.getElementById('manualCutsBody');
+  if(manualCuts.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888;">Нет ручных вырезов</td></tr>';
+    return;
+  }
+  tbody.innerHTML = manualCuts.map((c, i) => `
+    <tr>
+      <td>${c.isProcessed ? '🎧 Обработка' : '📀 Оригинал'}</td>
+      <td>${fmtDur(c.procStart)} -> ${fmtDur(c.procEnd)}</td>
+      <td><b>${fmtDur(c.start)} -> ${fmtDur(c.end)}</b></td>
+      <td><button class="play-btn" style="background:#e94560; padding:2px 8px;" onclick="removeManualCut(${i})">X</button></td>
+    </tr>
+  `).join('');
+}
+
+function exportManualCuts() {
+  if (manualCuts.length === 0) { alert('Добавьте хотя бы один вырез!'); return; }
+  if (!debugData || !debugData.source_file) return;
+  
+  let originalFile = debugData.source_file;
+  if (originalFile.includes('lofi_tracks/')) {
+    originalFile = originalFile.split('lofi_tracks/').pop();
+  } else {
+    originalFile = originalFile.split(/[/\\]/).pop();
+  }
+  const baseName = originalFile.replace(/\.[^/.]+$/, "");
+  
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(manualCuts, null, 2));
+  const dlAnchorElem = document.createElement('a');
+  dlAnchorElem.setAttribute("href", dataStr);
+  dlAnchorElem.setAttribute("download", `${baseName}_manual_cuts.json`);
+  dlAnchorElem.style.display = 'none';
+  document.body.appendChild(dlAnchorElem);
+  dlAnchorElem.click();
+  document.body.removeChild(dlAnchorElem);
+}
+
+document.addEventListener('keydown', function(event) {
+  if (event.target.tagName && event.target.tagName.toLowerCase() === 'input') return;
+  if (event.key === '[') setManualTime('start');
+  if (event.key === ']') setManualTime('end');
+});
 </script>
 </body>
 </html>
