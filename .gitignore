@@ -6,6 +6,10 @@
 *.aac
 *.m4a
 
+# Debug logs
+debug_cuts_*.json
+
+
 # Temp chunks
 _temp_chunks/
 

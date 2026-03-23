@@ -21,9 +21,11 @@ if sys.platform == "win32":
         pass
 
 # ============== НАСТРОЙКИ ==============
-SILENCE_THRESH = -40         # Порог тишины (дБ). -45 ловит только настоящую тишину между треками.
-MIN_SILENCE_LEN = 1.0       
-FADE_SEC = 0.4               # Длина плавного затухания/нарастания (в сек).
+SILENCE_THRESH = -45         # Порог тишины (дБ). Смягчен, чтобы ловить фоновый шум (не идеальный ноль).
+MIN_SILENCE_LEN = 0.5        # Мин. длина тишины (сек). Захватываем более короткие паузы.
+QUIET_THRESH = -30           # Порог "тихого звука" (дБ). Хвосты/вступления ниже этого будут вырезаны вместе с тишиной.
+QUIET_SCAN_STEP = 0.5        # Шаг сканирования тихих хвостов (секунды).
+FADE_SEC = 1.0               # Длина кроссфейда между песнями (в сек). Увеличено для плавности.
 
 # Настройки громкости
 NORMALIZE_AUDIO = False      # Вкл/выкл выравнивание громкости.
@@ -161,6 +163,73 @@ def detect_silences_parallel(filepath, total_duration):
             merged[-1] = (prev[0], max(prev[1], s[1]), max(prev[1], s[1]) - prev[0])
         else:
             merged.append(s)
+    return merged
+
+
+def _get_rms_at(filepath, position, duration=0.5):
+    """Замер средней громкости (RMS) в точке файла."""
+    cmd = [
+        FFMPEG, "-hide_banner", "-nostats",
+        "-ss", str(max(0, position)), "-t", str(duration),
+        "-i", str(filepath),
+        "-af", "volumedetect",
+        "-f", "null", "-"
+    ]
+    r = safe_run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    for line in r.stderr.split('\n'):
+        if 'mean_volume' in line:
+            m = re.search(r'([\-\d.]+)\s*dB', line)
+            if m:
+                return float(m.group(1))
+    return -100.0  # Если не удалось замерить — считаем тишиной
+
+
+def expand_silence_zones(filepath, silences, total_duration):
+    """
+    Расширяем каждую зону тишины, захватывая тихие хвосты/вступления песен.
+    Хвост: тихий звук перед тишиной (конец песни затихает).
+    Вступление: тихий звук после тишины (начало новой песни нарастает).
+    """
+    if not silences:
+        return []
+    
+    expanded = []
+    print(f"  Расширение зон тишины (захват тихих хвостов < {QUIET_THRESH} дБ)...")
+    
+    for sil_start, sil_end, sil_dur in silences:
+        # Расширяем влево (захватываем тихий хвост песни)
+        new_start = sil_start
+        while new_start > QUIET_SCAN_STEP:
+            rms = _get_rms_at(filepath, new_start - QUIET_SCAN_STEP, QUIET_SCAN_STEP)
+            if rms < QUIET_THRESH:
+                new_start -= QUIET_SCAN_STEP
+            else:
+                break
+        
+        # Расширяем вправо (захватываем тихое вступление следующей песни)
+        new_end = sil_end
+        while new_end < total_duration - QUIET_SCAN_STEP:
+            rms = _get_rms_at(filepath, new_end, QUIET_SCAN_STEP)
+            if rms < QUIET_THRESH:
+                new_end += QUIET_SCAN_STEP
+            else:
+                break
+        
+        added = (new_start - sil_start) + (new_end - sil_end)
+        if abs(added) > 0.1:
+            print(f"    {fmt(sil_start)} | Тишина {sil_dur:.1f}с → расширено до {new_end - new_start:.1f}с (хвосты: {abs(added):.1f}с)")
+        
+        expanded.append((new_start, new_end, new_end - new_start))
+    
+    # Мерджим перекрывающиеся зоны
+    merged = []
+    for z in sorted(expanded, key=lambda x: x[0]):
+        if merged and z[0] <= merged[-1][1]:
+            prev = merged[-1]
+            merged[-1] = (prev[0], max(prev[1], z[1]), max(prev[1], z[1]) - prev[0])
+        else:
+            merged.append(z)
+    
     return merged
 
 
@@ -349,9 +418,9 @@ def _process_chunk(args):
     else:
         af = "anull" # Пустой фильтр
     
-    # Микро-фейды (10мс) на краях каждого чанка для устранения щелчков/пуков
-    # Фейд-ин убирает скачок амплитуды в начале, фейд-аут — в конце
-    MICRO_FADE = 0.01  # 10 мс — неслышно, но убивает щелчки
+    # Микро-фейды (30мс) на краях каждого чанка для устранения щелчков/пуков
+    # 30мс — неслышно, но гарантирует плавный старт/стоп на нулевом уровне
+    MICRO_FADE = 0.03  # 30 мс
     af_chain = f"{af},afade=t=in:d={MICRO_FADE},afade=t=out:st={max(0, duration - MICRO_FADE)}:d={MICRO_FADE}"
     
     cmd2 = [
@@ -367,7 +436,7 @@ def _process_chunk(args):
 
 
 
-def process_mix(filepath, output_filename):
+def process_mix(filepath, output_filename, original_file=None):
     print("\n" + "=" * 55)
     print("   🔧 ОБРАБОТКА МИКСА")
     print("=" * 55)
@@ -376,11 +445,16 @@ def process_mix(filepath, output_filename):
     dur = meta["duration"]
     print(f"  Файл: {filepath.name} ({fmt(dur)})")
     
-    # 1. Поиск пауз
-    print(f"\n📍 Шаг 1: Поиск пауз...")
-    silences = detect_silences_parallel(filepath, dur)
+    # 1. Поиск абсолютной тишины
+    print(f"\n📍 Шаг 1: Поиск тишины ({SILENCE_THRESH} дБ)...")
+    raw_silences = detect_silences_parallel(filepath, dur)
+    print(f"  Найдено абсолютных пауз: {len(raw_silences)}")
     
-    # 2. Сегменты
+    # 2. Расширение зон тишины (захват тихих хвостов)
+    print(f"\n📍 Шаг 2: Расширение зон (захват тихих хвостов < {QUIET_THRESH} дБ)...")
+    silences = expand_silence_zones(filepath, raw_silences, dur)
+    
+    # 3. Сегменты
     segments = []
     prev_end = 0.0
     for start, end, d in silences:
@@ -393,7 +467,63 @@ def process_mix(filepath, output_filename):
         segments = [(0, dur)]
     
     total_sil = sum(s[2] for s in silences) if silences else 0
-    print(f"  Сегментов: {len(segments)} | Вырежем: {fmt(total_sil)} тишины")
+    print(f"\n  📊 Сегментов: {len(segments)} | Вырежем: {fmt(total_sil)} (тишина + тихие хвосты)")
+    
+    # === Сохраняем дебаг-лог ===
+    # Карта времени: обработанный файл → оригинал
+    time_map = []
+    output_pos = 0.0
+    for i, (seg_start, seg_end) in enumerate(segments):
+        seg_dur = seg_end - seg_start
+        
+        overlap_dur = 0.0
+        if i > 0:
+            prev_dur = segments[i-1][1] - segments[i-1][0]
+            overlap_dur = min(FADE_SEC, prev_dur / 2.0, seg_dur / 2.0)
+            
+        output_pos -= overlap_dur  # Вычитаем время наложения (кроссфейда)
+        output_pos = max(0.0, output_pos)
+        
+        time_map.append({
+            "output_start": output_pos,
+            "output_end": output_pos + seg_dur,
+            "output_start_fmt": fmt(output_pos),
+            "output_end_fmt": fmt(output_pos + seg_dur),
+            "original_start": seg_start,
+            "original_end": seg_end,
+            "original_start_fmt": fmt(seg_start),
+            "original_end_fmt": fmt(seg_end),
+            "segment_dur": round(seg_dur, 2),
+        })
+        output_pos += seg_dur
+    
+    debug_log = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source_file": str(original_file).replace('\\', '/') if original_file else str(filepath).replace('\\', '/'),
+        "output_file": str(output_filename),
+        "source_duration": dur,
+
+        "settings": {
+            "SILENCE_THRESH": SILENCE_THRESH,
+            "MIN_SILENCE_LEN": MIN_SILENCE_LEN,
+            "QUIET_THRESH": QUIET_THRESH,
+            "QUIET_SCAN_STEP": QUIET_SCAN_STEP,
+            "FADE_SEC": FADE_SEC,
+            "NORMALIZE_AUDIO": NORMALIZE_AUDIO,
+            "TARGET_LOUDNESS": TARGET_LOUDNESS,
+        },
+        "raw_silences": [{"start": s[0], "end": s[1], "dur": s[2], "start_fmt": fmt(s[0]), "end_fmt": fmt(s[1])} for s in raw_silences],
+        "expanded_silences": [{"start": s[0], "end": s[1], "dur": s[2], "start_fmt": fmt(s[0]), "end_fmt": fmt(s[1])} for s in silences],
+        "segments_kept": [{"start": s[0], "end": s[1], "dur": s[1]-s[0], "start_fmt": fmt(s[0]), "end_fmt": fmt(s[1])} for s in segments],
+        "time_map": time_map,
+        "total_silence_cut": total_sil,
+    }
+    debug_path = SCRIPT_DIR / f"debug_cuts_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    with open(debug_path, "w", encoding="utf-8") as f:
+        json.dump(debug_log, f, ensure_ascii=False, indent=2)
+    print(f"  📝 Дебаг-лог сохранен: {debug_path.name}")
+    print(f"  📍 Карта времени (output → original): {len(time_map)} сегментов")
+
     
     # 3. Параллельная нарезка + нормализация
     TEMP_DIR.mkdir(exist_ok=True)
@@ -436,27 +566,28 @@ def process_mix(filepath, output_filename):
         print("Ошибка: ни один чанк не был создан!")
         return
         
-    # 3. Склейка через потоковый фильтр FFmpeg acrossfade
-    print(f"\n📍 Шаг 3: Бесшовная склейка ({len(valid_chunks)} частей) (аппаратный потоковый кроссфейд)...")
-    print("  (Используется кривая 'qsin' (Equal Power) — 0% просадки громкости, 0% 'пуков', 0 МБ ОЗУ)")
+    # 4. Бесшовная склейка (кроссфейд)
+    interleaved = valid_chunks
+    
+    print(f"\n📍 Шаг 4: Бесшовная склейка ({len(valid_chunks)} фрагментов)...")
+    print(f"  (Настоящий кроссфейд {FADE_SEC}с между песнями)")
     
     t0 = time.time()
     
     cmd = [FFMPEG, "-y", "-hide_banner"]
-    for chunk in valid_chunks:
+    for chunk in interleaved:
         cmd.extend(["-i", chunk["path"]])
         
     filter_parts = []
     last_out = "0:a"
-    for i in range(1, len(valid_chunks)):
+    for i in range(1, len(interleaved)):
         out_pad = f"a{i}"
-        dur1 = valid_chunks[i-1]["dur"]
-        dur2 = valid_chunks[i]["dur"]
+        dur1 = interleaved[i-1]["dur"]
+        dur2 = interleaved[i]["dur"]
         
         safe_fade = min(FADE_SEC, dur1 / 2.0, dur2 / 2.0)
         fade_dur = round(max(0.01, safe_fade), 3)
         
-        # c1=qsin:c2=qsin это логарифмический диджейский кроссфейд равной мощности
         filter_parts.append(f"[{last_out}][{i}:a]acrossfade=d={fade_dur}:c1=qsin:c2=qsin[{out_pad}]")
         last_out = out_pad
         
@@ -536,4 +667,4 @@ if __name__ == "__main__":
     should_process = analyze_track(working_file)
     if should_process:
         out_name = f"[PRO] {input_file.name}"
-        process_mix(working_file, out_name)
+        process_mix(working_file, out_name, input_file)

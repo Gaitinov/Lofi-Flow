@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>🎵 LoFi-Flow Debug Viewer</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',sans-serif; background:#1a1a2e; color:#e0e0e0; padding:20px; padding-bottom:80px; }
+  h1 { color:#e94560; margin-bottom:10px; font-size:1.6em; }
+  h2 { color:#0f3460; background:#e94560; display:inline-block; padding:4px 14px; border-radius:6px; margin:18px 0 10px; font-size:1.1em; }
+  .drop-zone {
+    border:2px dashed #e94560; border-radius:12px; padding:40px; text-align:center;
+    cursor:pointer; margin:20px 0; transition:background .2s;
+  }
+  .drop-zone:hover, .drop-zone.drag { background:rgba(233,69,96,.15); }
+  .drop-zone input { display:none; }
+  .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:10px 0; }
+  .info-card { background:#16213e; padding:12px; border-radius:8px; border-left:3px solid #e94560; }
+  .info-card .label { font-size:.75em; color:#888; text-transform:uppercase; }
+  .info-card .value { font-size:1.3em; font-weight:bold; color:#fff; margin-top:2px; }
+  table { width:100%; border-collapse:collapse; margin:8px 0; font-size:.9em; }
+  th { background:#0f3460; padding:8px 10px; text-align:left; position:sticky; top:0; }
+  td { padding:6px 10px; border-bottom:1px solid #222; }
+  tr:hover td { background:rgba(233,69,96,.1); }
+  .tag { display:inline-block; padding:2px 8px; border-radius:4px; font-size:.8em; font-weight:bold; }
+  .tag-cut { background:#e94560; color:#fff; }
+  .tag-keep { background:#2ecc71; color:#fff; }
+  .tag-expand { background:#f39c12; color:#fff; }
+  .timeline { position:relative; height:40px; background:#16213e; border-radius:6px; margin:10px 0; overflow:hidden; }
+  .timeline .seg { position:absolute; height:100%; top:0; }
+  .timeline .seg-keep { background:rgba(46,204,113,.4); border:1px solid #2ecc71; }
+  .timeline .seg-cut { background:rgba(233,69,96,.4); border:1px solid #e94560; }
+  .timeline .seg:hover { opacity:.8; }
+  .tooltip { font-size:.75em; color:#aaa; margin-top:6px; }
+  #content { display:none; }
+  .search-box { margin:10px 0; }
+  .search-box input { background:#16213e; border:1px solid #333; color:#fff; padding:8px 14px; border-radius:6px; width:300px; font-size:.95em; }
+  .highlight { background:#e94560; color:#fff; padding:0 2px; border-radius:2px; }
+  .player-bar { position:fixed; bottom:0; left:0; right:0; background:#0f3460; padding:10px 20px; display:flex; align-items:center; gap:20px; z-index:1000; border-top:2px solid #e94560; box-shadow:0 -5px 15px rgba(0,0,0,0.5); }
+  .play-btn { background:#e94560; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:.8em; font-weight:bold; }
+  .play-btn:hover { background:#ff5c77; }
+</style>
+</head>
+<body>
+
+<h1>🎵 LoFi-Flow Debug Viewer</h1>
+
+<div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+  📂 Перетащи <b>debug_cuts_*.json</b> сюда или кликни для выбора
+  <input type="file" id="fileInput" accept=".json">
+</div>
+
+<div id="content">
+
+  <h2>📋 Общая информация</h2>
+  <div class="info-grid" id="infoGrid"></div>
+
+  <h2>🎨 Визуальная карта</h2>
+  <div class="timeline" id="timeline"></div>
+  <div class="tooltip">🟢 Зелёный = оставлено (музыка) &nbsp; 🔴 Красный = вырезано (тишина + хвосты)</div>
+
+  <h2>🗺 Карта времени (Output → Original)</h2>
+  <p class="tooltip">Слышишь пук на NN:NN? Найди тут — узнаешь тайминг в оригинале.</p>
+  <div class="search-box">
+    <input type="text" id="searchTime" placeholder="Поиск по времени (напр. 00:20)" oninput="filterTimeMap()">
+  </div>
+  <table>
+    <thead><tr>
+      <th>#</th>
+      <th>🎧 В обработке</th>
+      <th>📀 В оригинале</th>
+      <th>Длина</th>
+    </tr></thead>
+    <tbody id="timeMapBody"></tbody>
+  </table>
+
+  <h2>✂️ Вырезанные зоны</h2>
+  <table>
+    <thead><tr>
+      <th>#</th>
+      <th>Начало</th>
+      <th>Конец</th>
+      <th>Тишина</th>
+      <th>+ Хвосты</th>
+      <th>Итого вырезано</th>
+    </tr></thead>
+    <tbody id="cutsBody"></tbody>
+  </table>
+
+  <h2>⚙️ Настройки</h2>
+  <div class="info-grid" id="settingsGrid"></div>
+
+  <div class="player-bar" id="playerBar">
+    <div id="nowPlaying" style="font-weight:bold; min-width:300px;">🎵 Выбери тайминг...</div>
+    <button class="play-btn" style="font-size:1em; padding:6px 14px;" onclick="skipAudio(-5)" title="Назад на 5 секунд">⏪ -5s</button>
+    <audio id="audioPlayer" controls style="flex-grow:1; outline:none;"></audio>
+    <button class="play-btn" style="font-size:1em; padding:6px 14px;" onclick="skipAudio(5)" title="Вперед на 5 секунд">+5s ⏩</button>
+  </div>
+</div>
+
+<script>
+let debugData = null;
+let allTimeMapRows = [];
+
+function skipAudio(seconds) {
+  const audioPlayer = document.getElementById('audioPlayer');
+  if (audioPlayer && audioPlayer.src) {
+    audioPlayer.currentTime += seconds;
+  }
+}
+
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+['dragenter','dragover'].forEach(e => dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.add('drag'); }));
+['dragleave','drop'].forEach(e => dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.remove('drag'); }));
+dropZone.addEventListener('drop', e => { if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      debugData = JSON.parse(e.target.result);
+      render();
+    } catch(err) { alert('Ошибка чтения JSON: ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+function fmtDur(sec) {
+  if (typeof sec !== 'number') return sec;
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function render() {
+  document.getElementById('content').style.display = 'block';
+  dropZone.style.display = 'none';
+
+  const d = debugData;
+  const dur = d.source_duration;
+
+  // Info
+  const infoGrid = document.getElementById('infoGrid');
+  const totalCut = d.total_silence_cut || 0;
+  const segs = d.segments_kept?.length || 0;
+  infoGrid.innerHTML = [
+    {l:'Файл',v: d.source_file.split(/[/\\]/).pop()},
+    {l:'Длительность',v: fmtDur(dur)},
+    {l:'Вырезано',v: fmtDur(totalCut)},
+    {l:'Итого после',v: fmtDur(dur - totalCut)},
+    {l:'Сегментов',v: segs},
+    {l:'Разрезов',v: d.expanded_silences?.length || 0},
+    {l:'Дата',v: d.timestamp},
+  ].map(c => `<div class="info-card"><div class="label">${c.l}</div><div class="value">${c.v}</div></div>`).join('');
+
+  // Timeline
+  const tl = document.getElementById('timeline');
+  tl.innerHTML = '';
+  if(d.segments_kept) {
+    d.segments_kept.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'seg seg-keep';
+      el.style.left = (s.start/dur*100)+'%';
+      el.style.width = Math.max(0.2,(s.dur||s.end-s.start)/dur*100)+'%';
+      el.title = `🎵 ${s.start_fmt} → ${s.end_fmt}`;
+      tl.appendChild(el);
+    });
+  }
+  if(d.expanded_silences) {
+    d.expanded_silences.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'seg seg-cut';
+      el.style.left = (s.start/dur*100)+'%';
+      el.style.width = Math.max(0.2,s.dur/dur*100)+'%';
+      el.title = `✂️ ${s.start_fmt} → ${s.end_fmt} (${s.dur.toFixed(1)}с)`;
+      tl.appendChild(el);
+    });
+  }
+
+  // Time Map
+  const tmBody = document.getElementById('timeMapBody');
+  allTimeMapRows = [];
+  if(d.time_map) {
+    d.time_map.forEach((m,i) => {
+      const row = `<tr>
+        <td>${i+1}</td>
+        <td>
+          <button class="play-btn" onclick="playAudio('processed', ${m.output_start})" title="Слушать в обработанном файле">▶</button>
+          <span class="tag tag-keep">${m.output_start_fmt}</span> → <span class="tag tag-keep">${m.output_end_fmt}</span>
+        </td>
+        <td>
+          <button class="play-btn" onclick="playAudio('original', ${m.original_start})" title="Слушать в оригинале">▶</button>
+          <span class="tag tag-expand">${m.original_start_fmt}</span> → <span class="tag tag-expand">${m.original_end_fmt}</span>
+        </td>
+        <td>${fmtDur(m.segment_dur)}</td>
+      </tr>`;
+      allTimeMapRows.push({html:row, text:`${m.output_start_fmt} ${m.output_end_fmt} ${m.original_start_fmt} ${m.original_end_fmt}`});
+    });
+    tmBody.innerHTML = allTimeMapRows.map(r=>r.html).join('');
+  }
+
+  // Cuts
+  const cutsBody = document.getElementById('cutsBody');
+  if(d.expanded_silences && d.raw_silences) {
+    const rawMap = {};
+    d.raw_silences.forEach(r => { rawMap[r.start_fmt] = r; });
+
+    cutsBody.innerHTML = d.expanded_silences.map((s,i) => {
+      const rawDur = s.dur - (d.expanded_silences[i]?.dur - s.dur); // approximate
+      const tailSec = Math.max(0, s.dur - (rawMap[s.start_fmt]?.dur || s.dur));
+      return `<tr>
+        <td>${i+1}</td>
+        <td><button class="play-btn" onclick="playAudio('original', ${s.start})" title="Слушать вырезанное место в оригинале">▶</button> ${s.start_fmt}</td>
+        <td>${s.end_fmt}</td>
+        <td>${(s.dur - tailSec).toFixed(1)}с</td>
+        <td><span class="tag tag-expand">+${tailSec.toFixed(1)}с</span></td>
+        <td><b>${s.dur.toFixed(1)}с</b></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Settings
+  const sg = document.getElementById('settingsGrid');
+  if(d.settings) {
+    sg.innerHTML = Object.entries(d.settings).map(([k,v]) =>
+      `<div class="info-card"><div class="label">${k}</div><div class="value">${v}</div></div>`
+    ).join('');
+  }
+}
+
+function filterTimeMap() {
+  const q = document.getElementById('searchTime').value.trim().toLowerCase();
+  const body = document.getElementById('timeMapBody');
+  if(!q) { body.innerHTML = allTimeMapRows.map(r=>r.html).join(''); return; }
+  body.innerHTML = allTimeMapRows.filter(r => r.text.toLowerCase().includes(q)).map(r=>r.html).join('');
+}
+
+let currentAudioSrc = '';
+function playAudio(type, timeSec) {
+  const d = debugData;
+  if (!d) return;
+  
+  let originalFile = d.source_file;
+  if (originalFile.includes('lofi_tracks/')) {
+    originalFile = 'lofi_tracks/' + originalFile.split('lofi_tracks/').pop();
+  } else {
+    originalFile = originalFile.split(/[/\\]/).pop();
+  }
+  const processedFile = d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
+  
+  const targetFile = type === 'original' ? originalFile : processedFile;
+  
+  if (!targetFile) {
+    alert(type === 'original' ? 'Оригинал не найден.' : 'Обработанный файл не найден в логе. Возможно, это старый лог.');
+    return;
+  }
+  
+  const audioPlayer = document.getElementById('audioPlayer');
+  const nowPlaying = document.getElementById('nowPlaying');
+  
+  if (currentAudioSrc !== targetFile) {
+    // encodeURIComponent preserves characters like '#' that browser handles weirdly
+    audioPlayer.src = encodeURI(targetFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
+    currentAudioSrc = targetFile;
+    const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
+    nowPlaying.innerText = `Поёт: ${targetFile} (${typeLabel})`;
+    
+    audioPlayer.onloadedmetadata = () => {
+      audioPlayer.currentTime = timeSec;
+      audioPlayer.play().catch(e => console.error("Playback failed:", e));
+    };
+  } else {
+    audioPlayer.currentTime = timeSec;
+    audioPlayer.play().catch(e => console.error("Playback failed:", e));
+  }
+}
+</script>
+</body>
+</html>
