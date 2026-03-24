@@ -5,6 +5,7 @@
 <title>🎵 LoFi-Flow Debug Viewer</title>
 <style>
 :root {
+    color-scheme: dark;
     --bg: #1a1a2e;
     --card-bg: #16213e;
     --accent: #e94560;
@@ -104,9 +105,10 @@
   }
   .time-display { font-family: 'JetBrains Mono', monospace; font-size: 1em; color: #fff; min-width: 140px; text-align: center; }
   .speed-select { 
-    background: rgba(255,255,255,0.05); color: #fff; border: 1px solid #444; 
-    padding: 6px 12px; border-radius: var(--radius); outline: none; cursor: pointer; transition: var(--transition);
+    background: var(--card-bg); color: var(--text); border: 1px solid rgba(255,255,255,0.1); 
+    padding: 4px 8px; border-radius: 4px; cursor: pointer; outline: none; font-size: 0.9em;
   }
+  .speed-select option { background: var(--card-bg); color: var(--text); }
   .speed-select:hover { border-color: var(--accent); }
   #nowPlaying { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px; font-size: 0.85em; color: var(--text-dim); }
 
