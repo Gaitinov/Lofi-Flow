@@ -55,6 +55,14 @@
   <h2>📋 Общая информация</h2>
   <div class="info-grid" id="infoGrid"></div>
 
+  <div id="folderInfo" class="info-card" style="margin: 10px 0; display:none; background:#0f3460; border-left-color:#2ecc71;">
+    <div class="label">📂 Папка с исходниками (сюда сохранять JSON)</div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:5px;">
+        <code id="folderPathText" style="background:rgba(0,0,0,0.3); padding:4px 8px; border-radius:4px; flex-grow:1; font-size:0.9em; word-break:break-all;"></code>
+        <button class="play-btn" style="background:#2ecc71; white-space:nowrap;" onclick="copyFolderPath(this)">📋 Копировать путь</button>
+    </div>
+  </div>
+
   <h2>🎨 Визуальная карта</h2>
   <div class="timeline" id="timeline"></div>
   <div class="tooltip">🟢 Зелёный = оставлено (музыка) &nbsp; 🔴 Красный = вырезано (тишина + хвосты)</div>
@@ -253,6 +261,39 @@ function render() {
       `<div class="info-card"><div class="label">${k}</div><div class="value">${v}</div></div>`
     ).join('');
   }
+
+  // Folder info
+  if (d.source_file) {
+    let folder = '';
+    const srcFile = d.source_file.replace(/\\/g, '/');
+    const lastSlash = srcFile.lastIndexOf('/');
+    const relFolder = lastSlash !== -1 ? srcFile.substring(0, lastSlash) : '';
+    
+    // Пытаемся получить абсолютный путь, если мы открыты локально
+    let basePath = window.location.pathname.replace(/\\/g, '/');
+    if (basePath.startsWith('/')) basePath = basePath.substring(1); // для Windows: /C:/ -> C:/
+    const lastBaseSlash = basePath.lastIndexOf('/');
+    if (lastBaseSlash !== -1) {
+      const parentDir = basePath.substring(0, lastBaseSlash);
+      folder = parentDir + (relFolder ? '/' + relFolder : '');
+    } else {
+      folder = relFolder || '.';
+    }
+    
+    // Для Windows заменяем слэши на обратные, чтобы путь выглядел «родным» в Проводнике
+    const winPath = decodeURI(folder).replace(/\//g, '\\');
+    document.getElementById('folderInfo').style.display = 'block';
+    document.getElementById('folderPathText').innerText = winPath;
+  }
+}
+
+function copyFolderPath(btn) {
+  const path = document.getElementById('folderPathText').innerText;
+  navigator.clipboard.writeText(path).then(() => {
+    const oldText = btn.innerText;
+    btn.innerText = '✅ Скопировано!';
+    setTimeout(() => btn.innerText = oldText, 2000);
+  });
 }
 
 function filterTimeMap() {
@@ -313,6 +354,20 @@ function setManualTime(type) {
   const t = audio.currentTime;
   if(type==='start') { manStart = t; document.getElementById('manStart').innerText = t.toFixed(1); }
   else { manEnd = t; document.getElementById('manEnd').innerText = t.toFixed(1); }
+}
+
+function jumpToManualEnd() {
+  const audio = document.getElementById('audioPlayer');
+  if(!audio) return;
+  audio.currentTime = manEnd;
+  audio.play().catch(e => console.error("Playback failed:", e));
+}
+
+function jumpToTime(t) {
+  const audio = document.getElementById('audioPlayer');
+  if(!audio) return;
+  audio.currentTime = t;
+  audio.play().catch(e => console.error("Playback failed:", e));
 }
 
 function mapToOriginalTime(t, preferLast) {
@@ -378,11 +433,34 @@ function renderManualCuts() {
   tbody.innerHTML = manualCuts.map((c, i) => `
     <tr>
       <td>${c.isProcessed ? '🎧 Обработка' : '📀 Оригинал'}</td>
-      <td>${fmtDur(c.procStart)} -> ${fmtDur(c.procEnd)}</td>
+      <td>
+        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'start')" title="Перейти к началу">${fmtDur(c.procStart)}</span> -> 
+        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'end')" title="Перейти к концу">${fmtDur(c.procEnd)}</span>
+      </td>
       <td><b>${fmtDur(c.start)} -> ${fmtDur(c.end)}</b></td>
       <td><button class="play-btn" style="background:#e94560; padding:2px 8px;" onclick="removeManualCut(${i})">X</button></td>
     </tr>
   `).join('');
+}
+
+function jumpToCutTime(idx, type) {
+  const cut = manualCuts[idx];
+  const audio = document.getElementById('audioPlayer');
+  if(!audio || !cut) return;
+  
+  // Убеждаемся, что мы слушаем тот же тип файла (обработанный или оригинал)
+  const d = debugData;
+  const processedFile = d && d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
+  const encodeProc = processedFile ? encodeURI(processedFile).replace(/#/g, '%23').replace(/\?/g, '%3F') : 'UNMATCHABLE';
+  const isCurrentlyProcessed = audio.src && audio.src.includes(encodeProc);
+
+  if (cut.isProcessed !== isCurrentlyProcessed) {
+    // Если тип не совпадает, переключаем аудио
+    playAudio(cut.isProcessed ? 'processed' : 'original', type === 'start' ? cut.procStart : cut.procEnd);
+  } else {
+    audio.currentTime = type === 'start' ? cut.procStart : cut.procEnd;
+    audio.play().catch(e => console.error("Playback failed:", e));
+  }
 }
 
 function exportManualCuts() {
@@ -411,6 +489,7 @@ document.addEventListener('keydown', function(event) {
   if (event.target.tagName && event.target.tagName.toLowerCase() === 'input') return;
   if (event.key === '[') setManualTime('start');
   if (event.key === ']') setManualTime('end');
+  if (event.key === 'p' || event.key === 'з' || event.key === '\'') jumpToManualEnd();
 });
 </script>
 </body>
