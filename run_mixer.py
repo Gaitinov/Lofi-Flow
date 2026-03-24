@@ -530,17 +530,18 @@ def process_mix(filepath, output_filename, original_file=None):
     print(f"\n📍 Шаг 2: Расширение зон (захват тихих хвостов < {QUIET_THRESH} дБ)...")
     silences = expand_silence_zones(filepath, raw_silences, dur)
     
-    # 3. Сегменты
+    # 3. Сегменты (только те, что длиннее 0.1с)
     segments = []
     prev_end = 0.0
     for start, end, d in silences:
-        if start > prev_end:
+        if start - prev_end > 0.1:
             segments.append((prev_end, start))
         prev_end = end
-    if prev_end < dur:
+    if dur - prev_end > 0.1:
         segments.append((prev_end, dur))
-    if not segments:
-        segments = [(0, dur)]
+    
+    if not segments and dur > 0.1:
+        segments = [(0.0, dur)]
     
     total_sil = sum(s[2] for s in silences) if silences else 0
     print(f"\n  📊 Сегментов: {len(segments)} | Вырежем: {fmt(total_sil)} (тишина + тихие хвосты)")
@@ -594,7 +595,8 @@ def process_mix(filepath, output_filename, original_file=None):
         "time_map": time_map,
         "total_silence_cut": total_sil,
     }
-    debug_path = SCRIPT_DIR / f"debug_cuts_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    base_name = original_file.stem if original_file else filepath.stem
+    debug_path = SCRIPT_DIR / f"debug_{base_name}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(debug_log, f, ensure_ascii=False, indent=2)
     print(f"  📝 Дебаг-лог сохранен: {debug_path.name}")

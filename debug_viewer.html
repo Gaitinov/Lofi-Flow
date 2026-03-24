@@ -103,7 +103,7 @@
     background: linear-gradient(90deg, var(--accent), var(--accent-hover)); 
     height: 100%; width: 0%; border-radius: 5px;
   }
-  .time-display { font-family: 'JetBrains Mono', monospace; font-size: 1em; color: #fff; min-width: 140px; text-align: center; }
+  .time-display { font-family: 'JetBrains Mono', monospace; font-size: 0.95em; color: #fff; min-width: 280px; text-align: center; }
   .speed-select { 
     background: var(--card-bg); color: var(--text); border: 1px solid rgba(255,255,255,0.1); 
     padding: 4px 8px; border-radius: 4px; cursor: pointer; outline: none; font-size: 0.9em;
@@ -249,6 +249,7 @@
 let debugData = null;
 let allTimeMapRows = [];
 let fileId = '';
+let currentPlayType = ''; 
 
 function getFileId(d) {
   if (!d || !d.source_file) return '';
@@ -438,6 +439,7 @@ let currentAudioSrc = '';
 function playAudio(type, timeSec) {
   const d = debugData;
   if (!d) return;
+  currentPlayType = type;
   
   let originalFile = d.source_file;
   if (originalFile.includes('lofi_tracks/')) {
@@ -540,7 +542,13 @@ window.addEventListener('load', () => {
       if (!audio.duration) return;
       const pct = (audio.currentTime / audio.duration) * 100;
       if(progressFill) progressFill.style.width = pct + '%';
-      if(timeDisplay) timeDisplay.innerText = `${fmtDur(audio.currentTime)} / ${fmtDur(audio.duration)}`;
+      
+      let timeStr = fmtDur(audio.currentTime);
+      if (currentPlayType === 'processed') {
+          const origTime = mapToOriginalTime(audio.currentTime);
+          timeStr += ` <span style="color:var(--text-dim); font-size: 0.85em;">(📀 ${fmtDur(origTime)})</span>`;
+      }
+      if(timeDisplay) timeDisplay.innerHTML = `${timeStr} / ${fmtDur(audio.duration)}`;
       
       // Сохраняем позицию каждые 5 секунд (или при паузе)
       const sec = Math.floor(audio.currentTime);
