@@ -7,11 +7,12 @@
 *.m4a
 
 # Debug markers and logs
-debug_cuts_*.json
+debug_*.json
 *_manual_cuts*.json
 
 # Data folders
 lofi_tracks/
+merger_tracks/
 Исходники/
 
 # Temp chunks
