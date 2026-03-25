@@ -180,6 +180,20 @@
     </div>
   </div>
 
+  <h2>💥 Поиск артефактов (Кликов)</h2>
+  <div class="info-card" style="margin-bottom:20px; border-top-color: var(--warning);">
+    <p class="tooltip" style="margin-top:0; color: #bbb;">Ищет резкие скачки амплитуды на стыках сегментов (возможные щелчки).</p>
+    <div style="margin: 15px 0; display:flex; align-items:center;">
+        <button class="btn btn-warning" id="btnScanClicks" onclick="scanForClicks()">🔍 Проверить на клики (Web Audio API)</button>
+        <input type="file" id="manualAudioInput" accept="audio/*" style="display:none;" onchange="handleManualAudioUploadForClicks(event, debugData)">
+        <span id="scanStatus" style="margin-left: 15px; color: var(--text-dim); font-size: 0.9em;">Готово к сканированию</span>
+    </div>
+    <table style="max-width:800px; display:none;" id="clicksTableWrapper">
+      <thead><tr><th>#</th><th>В миксе</th><th>В оригинале</th><th>Сила скачка</th><th>Действие</th></tr></thead>
+      <tbody id="clicksBody"></tbody>
+    </table>
+  </div>
+
   <h2>🗺 Карта времени (Output → Original)</h2>
   <p class="tooltip">Слышишь пук на NN:NN? Найди тут — узнаешь тайминг в оригинале.</p>
   <div class="search-box">
@@ -304,15 +318,16 @@ function render() {
   // Info
   const infoGrid = document.getElementById('infoGrid');
   const totalCut = d.total_silence_cut || 0;
-  const segs = d.segments_kept?.length || 0;
+  const segs = d.segments_kept?.length || d.time_map?.length || 0;
+  const finalDur = (d.final_stats && d.final_stats.output_duration) ? d.final_stats.output_duration : (dur - totalCut);
+  
   infoGrid.innerHTML = [
-    {l:'Файл',v: d.source_file.split(/[/\\]/).pop()},
-    {l:'Длительность',v: fmtDur(dur)},
+    {l:'Файл',v: d.source_file ? d.source_file.split(/[/\\]/).pop() : '?'},
+    {l:'Оригинал',v: fmtDur(dur)},
+    {l:'Итого',v: fmtDur(finalDur)},
     {l:'Вырезано',v: fmtDur(totalCut)},
-    {l:'Итого после',v: fmtDur(dur - totalCut)},
     {l:'Сегментов',v: segs},
-    {l:'Разрезов',v: d.expanded_silences?.length || 0},
-    {l:'Дата',v: d.timestamp},
+    {l:'Дата',v: d.timestamp || '?'},
   ].map(c => `<div class="info-card"><div class="label">${c.l}</div><div class="value">${c.v}</div></div>`).join('');
 
   // Timeline
@@ -325,6 +340,16 @@ function render() {
       el.style.left = (s.start/dur*100)+'%';
       el.style.width = Math.max(0.2,(s.dur||s.end-s.start)/dur*100)+'%';
       el.title = `🎵 ${s.start_fmt} → ${s.end_fmt}`;
+      tl.appendChild(el);
+    });
+  } else if (d.time_map) {
+    // В мерджере нет segments_kept, рисуем на основе time_map (относительно dur)
+    d.time_map.forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'seg seg-keep';
+      el.style.left = (m.original_start/dur*100)+'%';
+      el.style.width = Math.max(0.1, m.segment_dur/dur*100)+'%';
+      el.title = `🎵 ${m.source_track || 'Трек'}: ${m.original_start_fmt} → ${m.original_end_fmt}`;
       tl.appendChild(el);
     });
   }
@@ -344,6 +369,7 @@ function render() {
   allTimeMapRows = [];
   if(d.time_map) {
     d.time_map.forEach((m,i) => {
+      const sourceLabel = m.source_track ? `<br><small style="color:var(--text-dim)">${m.source_track}</small>` : '';
       const row = `<tr>
         <td>${i+1}</td>
         <td>
@@ -353,10 +379,11 @@ function render() {
         <td>
           <button class="btn btn-primary btn-sm" onclick="playAudio('original', ${m.original_start})" title="Слушать в оригинале">▶</button>
           <span class="tag tag-expand">${m.original_start_fmt}</span> → <span class="tag tag-expand">${m.original_end_fmt}</span>
+          ${sourceLabel}
         </td>
         <td>${fmtDur(m.segment_dur)}</td>
       </tr>`;
-      allTimeMapRows.push({html:row, text:`${m.output_start_fmt} ${m.output_end_fmt} ${m.original_start_fmt} ${m.original_end_fmt}`});
+      allTimeMapRows.push({html:row, text:`${m.output_start_fmt} ${m.output_end_fmt} ${m.original_start_fmt} ${m.original_end_fmt} ${m.source_track || ''}`});
     });
     tmBody.innerHTML = allTimeMapRows.map(r=>r.html).join('');
   }
@@ -781,6 +808,146 @@ function exportManualCuts() {
   document.body.appendChild(dlAnchorElem);
   dlAnchorElem.click();
   document.body.removeChild(dlAnchorElem);
+}
+
+// === CLICK DETECTION LOGIC ===
+async function scanForClicks() {
+  const d = debugData;
+  if (!d || !d.time_map || d.time_map.length < 2) {
+    alert("Нужно загрузить лог с минимум двумя сегментами.");
+    return;
+  }
+  
+  const processedFile = d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
+  if (!processedFile) {
+    alert("Обработанный файл не найден в логе.");
+    return;
+  }
+
+  const statusEl = document.getElementById('scanStatus');
+  const btn = document.getElementById('btnScanClicks');
+  const tbody = document.getElementById('clicksBody');
+  const tableWrap = document.getElementById('clicksTableWrapper');
+  
+  // Если запуск локальный (file://), fetch скорее всего не сработает.
+  // Сразу открываем выбор файла, чтобы не ждать ошибки CORS.
+  if (window.location.protocol === 'file:') {
+    document.getElementById('manualAudioInput').click();
+    return;
+  }
+
+  btn.disabled = true;
+  statusEl.innerText = "⏳ Загрузка аудиофайла...";
+  tbody.innerHTML = '';
+  tableWrap.style.display = 'none';
+
+  try {
+    const fileUrl = encodeURI(processedFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error("Файл не найден.");
+    
+    statusEl.innerText = "⏳ Декодирование аудио (подождите)...";
+    const arrayBuffer = await response.arrayBuffer();
+    await processAudioBufferForClicks(arrayBuffer, d);
+    
+  } catch (err) {
+    console.warn("Fetch failed, probably CORS or missing file", err);
+    statusEl.innerHTML = `<span style='color: var(--warning);'>Авто-загрузка не удалась. <button class="btn btn-outline btn-sm" onclick="document.getElementById('manualAudioInput').click()">Выберите <b>${processedFile}</b> вручную</button></span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleManualAudioUploadForClicks(event, d) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const statusEl = document.getElementById('scanStatus');
+    const tableWrap = document.getElementById('clicksTableWrapper');
+    const tbody = document.getElementById('clicksBody');
+    
+    statusEl.innerText = "⏳ Чтение файла в память...";
+    tbody.innerHTML = '';
+    tableWrap.style.display = 'none';
+    
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            statusEl.innerText = "⏳ Декодирование аудио (подождите)...";
+            await processAudioBufferForClicks(e.target.result, d);
+        } catch(err) {
+            statusEl.innerHTML = `<span style='color: var(--accent);'>❌ Ошибка: ${err.message}</span>`;
+            console.error(err);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+async function processAudioBufferForClicks(arrayBuffer, d) {
+    const statusEl = document.getElementById('scanStatus');
+    const tableWrap = document.getElementById('clicksTableWrapper');
+    const tbody = document.getElementById('clicksBody');
+    
+    // Для Safari нужен window.webkitAudioContext
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass();
+    
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    
+    statusEl.innerText = "🔍 Сканирование стыков...";
+    
+    const channelData = audioBuffer.getChannelData(0); // Анализируем левый канал
+    const sampleRate = audioBuffer.sampleRate;
+    
+    const scanWindow = 0.05; // Сканируем 50 мс вокруг стыка
+    const clickThreshold = 0.15; // Порог резкого скачка (от 0 до 1)
+    const foundClicks = [];
+    
+    for (let i = 0; i < d.time_map.length - 1; i++) {
+        const jointTime = d.time_map[i].output_end;
+        if (!jointTime) continue;
+        
+        const centerSample = Math.floor(jointTime * sampleRate);
+        const startSample = Math.max(0, centerSample - Math.floor(scanWindow * sampleRate));
+        const endSample = Math.min(channelData.length - 1, centerSample + Math.floor(scanWindow * sampleRate));
+        
+        let maxJump = 0;
+        let clickSampleTime = 0;
+        
+        for (let j = startSample + 1; j <= endSample; j++) {
+            const jump = Math.abs(channelData[j] - channelData[j-1]);
+            if (jump > maxJump) {
+                maxJump = jump;
+                clickSampleTime = j / sampleRate;
+            }
+        }
+        
+        if (maxJump > clickThreshold) {
+            foundClicks.push({
+                time: clickSampleTime,
+                origTime: mapToOriginalTime(clickSampleTime, false),
+                strength: maxJump
+            });
+        }
+    }
+    
+    if (foundClicks.length === 0) {
+        statusEl.innerHTML = "<span style='color: var(--success);'>✅ Артефактов не обнаружено! Микс чистый.</span>";
+    } else {
+        statusEl.innerHTML = `<span style='color: var(--warning);'>⚠️ Найдено подозрительных мест: ${foundClicks.length}</span>`;
+        tableWrap.style.display = 'table';
+        tbody.innerHTML = foundClicks.map((c, i) => `
+          <tr>
+            <td>${i+1}</td>
+            <td><span class="tag tag-cut">${fmtDur(c.time)}</span></td>
+            <td><span class="tag tag-expand">📀 ${fmtDur(c.origTime)}</span></td>
+            <td><b>${c.strength.toFixed(3)}</b></td>
+            <td>
+              <button class="btn btn-primary btn-sm" onclick="playAudio('processed', ${Math.max(0, c.time - 2)})">▶ За 2с до клика</button>
+            </td>
+          </tr>
+        `).join('');
+    }
 }
 
 document.addEventListener('keydown', function(event) {

@@ -28,6 +28,13 @@ QUIET_THRESH = -30           # Порог "тихого звука" (дБ). Хв
 QUIET_SCAN_STEP = 0.5        # Шаг сканирования тихих хвостов (секунды).
 FADE_SEC = 1.0               # Длина кроссфейда (в сек). Возвращено к 1.0 как в оригинале.
 
+# Фильтры артефактов (Авто-удаление кликов)
+CLICK_REMOVAL = True         # Автоматическое удаление щелчков и кликов встроенным фильтром FFmpeg
+ADECLICK_WINDOW = 55         # Размер окна в мс
+ADECLICK_OVERLAP = 75        # Перекрытие окон (%)
+ADECLICK_THRESHOLD = 2       # Порог обнаружения (чем ниже, тем агрессивнее. Было 10, стало 2)
+ADECLICK_BURST = 2           # Сколько соседних сэмплов считать кликом
+
 # Настройки громкости
 NORMALIZE_AUDIO = False      # Вкл/выкл выравнивание громкости. Возвращено к False как в оригинале.
 TARGET_LOUDNESS = -14.0      
@@ -62,6 +69,10 @@ def safe_run(cmd, **kwargs):
                 time.sleep(3 + attempt * 2)
                 continue
             raise e
+        except MemoryError:
+            print("  ⚠️ MemoryError. Ждем 5 сек...")
+            time.sleep(5)
+            continue
     return subprocess.run(cmd, **kwargs)
 
 
@@ -86,8 +97,63 @@ def get_duration(filepath):
         "duration": float(info["format"]["duration"]),
         "bitrate":  int(info["format"].get("bit_rate", 0)) // 1000,
         "channels": info["streams"][0].get("channels", 2),
-        "sample_rate": info["streams"][0].get("sample_rate", "44100"),
+        "sample_rate": int(info["streams"][0].get("sample_rate", "44100")),
     }
+
+
+def check_ffmpeg():
+    if not shutil.which(FFMPEG) or not shutil.which(FFPROBE):
+        print(f"Ошибка: {FFMPEG} или {FFPROBE} не найдены.")
+        print("Установите FFmpeg или положите ffmpeg.exe/ffprobe.exe в папку со скриптом.")
+        sys.exit(1)
+
+
+def scan_joints_for_clicks(filepath, time_map):
+    """Сканирует стыки в итоговом файле и выводит в консоль силу скачков."""
+    if not time_map or len(time_map) < 2:
+        return
+    
+    # Определяем реальный sample rate
+    meta = get_duration(filepath)
+    sr = meta.get("sample_rate", 44100)
+    
+    print(f"\n🔍 Проверка стыков на клики (post-render scan, {sr}Hz)...")
+    
+    window = 0.05 
+    for i in range(len(time_map) - 1):
+        joint = time_map[i]["output_end"]
+        temp_raw = TEMP_DIR / f"joint_test_{i}.raw"
+        start = max(0, joint - window)
+        cmd = [
+            FFMPEG, "-y", "-hide_banner", "-nostats",
+            "-ss", str(start), "-t", str(window * 2),
+            "-i", str(filepath),
+            "-f", "s16le", "-ac", "1", "-ar", str(sr), str(temp_raw)
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        if temp_raw.exists():
+            try:
+                with open(temp_raw, "rb") as f:
+                    data = f.read()
+                    import struct
+                    num_samples = len(data) // 2
+                    if num_samples < 2: continue
+                    
+                    samples = struct.unpack(f"<{num_samples}h", data)
+                    
+                    max_jump = 0
+                    for j in range(1, len(samples)):
+                        jump = abs(samples[j] - samples[j-1]) / 32768.0
+                        if jump > max_jump:
+                            max_jump = jump
+                    
+                    status = "✅ OK" if max_jump < 0.15 else "⚠️ CLICK?"
+                    print(f"  Стык {i+1} ({fmt(joint)}): скачок {max_jump:.3f} {status}")
+            except Exception as e:
+                print(f"  Ошибка сканирования стыка {i+1}: {e}")
+            finally:
+                temp_raw.unlink(missing_ok=True)
 
 
 def _run_silencedetect_chunk(filepath, start_sec, duration_sec, chunk_id):
@@ -266,19 +332,24 @@ def _process_chunk(args):
         else:
             af = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
     else:
-        af = "anull"
+        af = ""
     
-    MICRO_FADE = 0.03
-    af_chain = f"{af},afade=t=in:d={MICRO_FADE},afade=t=out:st={max(0, duration - MICRO_FADE)}:d={MICRO_FADE}"
+    # Убираем микро-фейды 0.03с, т.к. в конце делается acrossfade 1.0с.
+    # Двойная обработка фейдами на стыках может приводить к щелчкам.
+    af_chain = af
     
     cmd2 = [
         FFMPEG, "-y", "-hide_banner", "-nostats",
         "-ss", str(start), "-t", str(duration),
         "-i", str(input_file),
-        "-af", af_chain,
+    ]
+    if af_chain:
+        cmd2.extend(["-af", af_chain])
+        
+    cmd2.extend([
         "-c:a", "pcm_s16le",
         str(output_path)
-    ]
+    ])
     safe_run(cmd2, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return idx
 
@@ -315,7 +386,7 @@ def assemble_mega_mix(all_segments, output_filename):
             bar = "█" * filled + "░" * (30 - filled)
             print(f"\r  [{bar}] {pct:5.1f}% | {completed_count}/{len(tasks)} | ETA: {fmt(eta)}   ", end="", flush=True)
             
-    print(f"\n📍 Шаг 1.5: Валидация чанков...")
+    print(f"\n📍 Шаг 2: Валидация чанков...")
     valid_chunks = []
     for seg in all_segments:
         wav_file = Path(seg["chunk_path"])
@@ -329,8 +400,8 @@ def assemble_mega_mix(all_segments, output_filename):
         print("Ошибка: ни один чанк не был создан!")
         return
 
-    # 2. Бесшовная склейка (кроссфейд)
-    print(f"\n📍 Шаг 2: Бесшовная склейка ({len(valid_chunks)} фрагментов)...")
+    # 3. Бесшовная склейка (кроссфейд)
+    print(f"\n📍 Шаг 3: Бесшовная склейка ({len(valid_chunks)} фрагментов)...")
     print(f"  (Настоящий кроссфейд {FADE_SEC}с между песнями)")
     
     t0 = time.time()
@@ -351,21 +422,64 @@ def assemble_mega_mix(all_segments, output_filename):
         filter_parts.append(f"[{last_out}][{i}:a]acrossfade=d={fade_dur}:c1=qsin:c2=qsin[{out_pad}]")
         last_out = out_pad
         
-    filter_graph = ";".join(filter_parts)
+    # Комбинируем фильтры чистки: adeclick + adeclip
+    click_filter = (f"adeclick=w={ADECLICK_WINDOW}:o={ADECLICK_OVERLAP}:b={ADECLICK_BURST}:t={ADECLICK_THRESHOLD},"
+                    f"adeclip")
+    
     if filter_parts:
+        if CLICK_REMOVAL:
+            filter_parts.append(f"[{last_out}]{click_filter}[final_out]")
+            last_out = "final_out"
+            
+        filter_graph = ";".join(filter_parts)
         cmd.extend(["-filter_complex", filter_graph, "-map", f"[{last_out}]"])
     else:
         # Всего один сегмент
-        cmd.extend(["-map", "0:a"])
+        if CLICK_REMOVAL:
+            cmd.extend(["-af", click_filter])
+        else:
+            cmd.extend(["-map", "0:a"])
     
-    print(f"\n📍 Шаг 3: Экспорт в итоговый MP3 (финальный рендер)...")
+    print(f"\n📍 Шаг 4: Экспорт в итоговый MP3 (финальный рендер)...")
+    if CLICK_REMOVAL:
+        print(f"  ✨ Применяется фильтр анти-кликов: threshold={ADECLICK_THRESHOLD}")
+
     output_path = SCRIPT_DIR / output_filename
     cmd.extend(["-b:a", OUTPUT_BITRATE, str(output_path)])
     
-    safe_run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print(f"  Склейка и экспорт завершены за {fmt(time.time() - t0)}")
+    # Запускаем экспорт с отображением прогресса
+    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    
+    total_dur_render = sum(c["actual_dur"] for c in valid_chunks) - (len(valid_chunks) - 1) * FADE_SEC
+    print(f"  Экспорт микса длиной {fmt(total_dur_render)}...")
+    
+    render_start = time.time()
+    while True:
+        line = process.stderr.readline()
+        if not line: break
+        if "time=" in line:
+            m = re.search(r'time=([\d:.]+)', line)
+            if m:
+                cur_time_str = m.group(1)
+                try:
+                    parts = cur_time_str.split(':')
+                    cur_sec = float(parts[0])*3600 + float(parts[1])*60 + float(parts[2])
+                    pct = min(99.9, (cur_sec / total_dur_render) * 100)
+                    
+                    elapsed = time.time() - render_start
+                    eta_str = "--:--"
+                    if pct > 1.0:
+                        eta_sec = (elapsed / pct) * (100 - pct)
+                        eta_str = fmt(eta_sec)
+                    
+                    print(f"\r    Обработано: {cur_time_str} | {pct:5.1f}% | Осталось: ~{eta_str}", end="", flush=True)
+                except: pass
+    process.wait()
 
-    # 3. Дебаг-лог сборки
+    print(f"\n  ✅ Склейка и экспорт завершены за {fmt(time.time() - t0)}")
+
+
+    # 3. Дебаг-лог сборки и карта времени
     time_map = []
     output_pos = 0.0
     for i, seg in enumerate(valid_chunks):
@@ -392,14 +506,25 @@ def assemble_mega_mix(all_segments, output_filename):
         })
         output_pos += seg_dur
 
+    # 4. Пост-проверка стыков (теперь time_map определен)
+    print(f"\n📍 Шаг 5: Проверка стыков на клики...")
+    scan_joints_for_clicks(output_path, time_map)
+
+    # 5. Сохранение лога статов
+    debug_path = SCRIPT_DIR / f"debug_merger_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    final_meta = get_duration(output_path)
     debug_log = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source_file": "MULTIPLE_TRACKS",
         "output_file": str(output_filename),
         "source_duration": output_pos,
-        "time_map": time_map
+        "time_map": time_map,
+        "final_stats": {
+            "output_duration": final_meta["duration"],
+            "adeclick_active": CLICK_REMOVAL,
+            "adeclick_threshold": ADECLICK_THRESHOLD
+        }
     }
-    debug_path = SCRIPT_DIR / f"debug_MegaMix_{time.strftime('%Y%m%d_%H%M%S')}.json"
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(debug_log, f, ensure_ascii=False, indent=2)
         
@@ -418,6 +543,7 @@ def assemble_mega_mix(all_segments, output_filename):
 
 
 if __name__ == "__main__":
+    check_ffmpeg()
     folder = Path("merger_tracks")
     if not folder.exists():
         folder.mkdir()
@@ -490,8 +616,9 @@ if __name__ == "__main__":
     
     # Очистка оставшихся FLAC файлов, если они были
     for seg in all_segments:
-        if "source_" in seg["working_file"].name:
+        wf = Path(seg["working_file"])
+        if "source_" in wf.name:
             try:
-                seg["working_file"].unlink(missing_ok=True)
+                wf.unlink(missing_ok=True)
             except:
                 pass
