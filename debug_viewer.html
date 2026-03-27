@@ -174,9 +174,16 @@
          <tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding: 30px;">Нет ручных вырезов</td></tr>
       </tbody>
     </table>
-    <div style="margin-top: 20px; display:flex; gap:12px;">
-      <button class="btn btn-warning" onclick="exportManualCuts()">💾 Скачать ручные вырезы (.json)</button>
-      <button class="btn btn-outline btn-sm" onclick="clearSavedCuts()">🗑 Очистить память</button>
+    <div style="margin-top: 20px; display:flex; gap:120px; justify-content: space-between; align-items: center;">
+      <div style="display:flex; gap:12px;">
+        <button class="btn btn-warning" onclick="exportManualCuts()">💾 Скачать ручные вырезы (.json)</button>
+        <button class="btn btn-outline btn-sm" onclick="clearSavedCuts()">🗑 Очистить память</button>
+      </div>
+      <div id="playbackError" style="display:none; background: rgba(233, 69, 96, 0.1); border: 1px solid var(--accent); padding: 10px 15px; border-radius: var(--radius); color: var(--accent); font-size: 0.9em; flex-grow: 1; margin-left: 20px;">
+        ⚠️ <span id="errorMsg">Файл не найден</span>
+        <button class="btn btn-accent btn-sm" style="margin-left: 15px;" onclick="document.getElementById('manualPlaybackInput').click()">📁 Выбрать вручную</button>
+        <input type="file" id="manualPlaybackInput" style="display:none;" accept="audio/*" onchange="handleManualPlaybackFile(event)">
+      </div>
     </div>
   </div>
 
@@ -377,7 +384,7 @@ function render() {
           <span class="tag tag-keep">${m.output_start_fmt}</span> → <span class="tag tag-keep">${m.output_end_fmt}</span>
         </td>
         <td>
-          <button class="btn btn-primary btn-sm" onclick="playAudio('original', ${m.original_start})" title="Слушать в оригинале">▶</button>
+          <button class="btn btn-primary btn-sm" onclick="playAudio('original', ${m.original_start}, '${m.source_track || ''}')" title="Слушать в оригинале">▶</button>
           <span class="tag tag-expand">${m.original_start_fmt}</span> → <span class="tag tag-expand">${m.original_end_fmt}</span>
           ${sourceLabel}
         </td>
@@ -463,42 +470,94 @@ function filterTimeMap() {
 
 let currentAudioSrc = '';
 
-function playAudio(type, timeSec) {
+function playAudio(type, timeSec, trackName) {
   const d = debugData;
   if (!d) return;
+  
+  // Прячем старые ошибки
+  document.getElementById('playbackError').style.display = 'none';
+  
   currentPlayType = type;
+  localStorage.setItem(`last_type_${fileId}`, type);
   
-  let originalFile = d.source_file;
-  if (originalFile.includes('lofi_tracks/')) {
-    originalFile = 'lofi_tracks/' + originalFile.split('lofi_tracks/').pop();
+  let targetFile = '';
+  if (type === 'processed') {
+      targetFile = d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
   } else {
-    originalFile = originalFile.split(/[/\\]/).pop();
+      // Для режима мегамикса trackName приоритетнее чем d.source_file
+      let originalFile = trackName || d.source_file;
+      if (originalFile && originalFile.includes('lofi_tracks/')) {
+        originalFile = 'lofi_tracks/' + originalFile.split('lofi_tracks/').pop();
+      } else if (originalFile) {
+        originalFile = originalFile.split(/[/\\]/).pop();
+      }
+      targetFile = originalFile;
   }
-  const processedFile = d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
-  const targetFile = type === 'original' ? originalFile : processedFile;
   
-  if (!targetFile) {
-    alert(type === 'original' ? 'Оригинал не найден.' : 'Обработанный файл не найден.');
+  if (!targetFile || targetFile === 'MULTIPLE_TRACKS') {
+    alert(type === 'original' ? 'Оригинал не найден (или это мегамикс без привязки).' : 'Обработанный файл не найден.');
     return;
   }
   
   const audio = getAudio();
   const nowPlaying = document.getElementById('nowPlaying');
   
-  if (currentAudioSrc !== targetFile) {
-    audio.src = encodeURI(targetFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
-    currentAudioSrc = targetFile;
-    const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
+  // Проверяем, не подсунул ли пользователь файл вручную через Blob
+  const manualFile = localStorage.getItem(`manual_file_${targetFile}`);
+  const finalSrc = manualFile || encodeURI(targetFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
+
+  const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
+  
+  const setupAndPlay = () => {
+    audio.currentTime = timeSec;
+    audio.play().catch(e => {
+        console.error("Playback failed:", e);
+        if (e.name === 'NotAllowedError') {
+             nowPlaying.innerHTML = `<span style="color:var(--warning)">⚠️ Кликни "Плей" для запуска (защита браузера)</span>`;
+        }
+    });
+  };
+
+  if (currentAudioSrc !== finalSrc) {
+    audio.src = finalSrc;
+    currentAudioSrc = finalSrc;
     nowPlaying.innerText = `Поёт: ${targetFile} (${typeLabel})`;
     
-    audio.onloadedmetadata = () => {
-      audio.currentTime = timeSec;
-      audio.play().catch(e => console.error("Playback failed:", e));
+    audio.onloadedmetadata = setupAndPlay;
+    audio.onerror = () => {
+        if (audio.src) {
+           document.getElementById('errorMsg').innerText = `Файл "${targetFile}" не найден или заблокирован.`;
+           document.getElementById('playbackError').style.display = 'flex';
+           nowPlaying.innerHTML = `<span style="color:var(--accent)">❌ Ошибка загрузки "${targetFile}"</span>`;
+        }
     };
   } else {
-    audio.currentTime = timeSec;
-    audio.play().catch(e => console.error("Playback failed:", e));
+    setupAndPlay();
   }
+}
+
+function handleManualPlaybackFile(event) {
+    const file = event.target.files[0];
+    if (!file || !debugData) return;
+    
+    const url = URL.createObjectURL(file);
+    // Мы не можем сохранить Blob URL в localStorage надолго, 
+    // но можем использовать его в текущей сессии.
+    // Для более долгого хранения нужно запрашивать файл каждый раз или использовать IndexedDB.
+    // Пока просто подменяем src и играем.
+    
+    const audio = getAudio();
+    audio.src = url;
+    currentAudioSrc = url; // Помечаем, что это "специальный" источник
+    
+    const type = currentPlayType;
+    const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
+    document.getElementById('nowPlaying').innerText = `Поёт: ${file.name} (${typeLabel})`;
+    document.getElementById('playbackError').style.display = 'none';
+    
+    audio.onloadedmetadata = () => {
+        audio.play().catch(console.error);
+    };
 }
 
 let lastSavedSec = -1;
@@ -722,11 +781,13 @@ function loadSavedData() {
 
   // Предлагаем продолжить
   const savedPos = localStorage.getItem(`pos_${fileId}`);
+  const lastType = localStorage.getItem(`last_type_${fileId}`) || 'processed';
+  
   if (savedPos) {
     const time = parseFloat(savedPos);
     // Предлагаем продолжить только если мы не в самом начале (более 2 сек)
     if (time > 2 && confirm(`Найдена сохраненная позиция: ${fmtDur(time)}. Продолжить с этого места?`)) {
-      playAudio('processed', time);
+      playAudio(lastType, time);
     }
   }
 }
