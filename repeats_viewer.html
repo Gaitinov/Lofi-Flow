@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ Audio Repeat Verifier</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: rgba(30, 41, 59, 0.7);
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.3);
+            --danger: #f43f5e;
+            --text: #f1f5f9;
+            --text-dim: #94a3b8;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.15) 0, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(244, 63, 94, 0.1) 0, transparent 50%);
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+            margin-bottom: 120px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            background: linear-gradient(to right, #fff, var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+
+        .drop-zone {
+            background: var(--card);
+            border: 2px dashed #334155;
+            border-radius: var(--radius);
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+            margin-bottom: 20px;
+        }
+
+        .drop-zone:hover, .drop-zone.active {
+            border-color: var(--accent);
+            background: rgba(30, 41, 59, 0.9);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .drop-zone b { color: var(--accent); }
+
+        .audio-setup {
+            background: var(--card);
+            padding: 20px;
+            border-radius: var(--radius);
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+            display: none;
+            flex-direction: column;
+            gap: 15px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .audio-setup.visible { display: flex; }
+
+        .btn {
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover { background: #475569; }
+        .btn-accent { background: var(--accent); color: #000; }
+        .btn-accent:hover { background: #7dd3fc; transform: translateY(-1px); }
+
+        .matches-list {
+            display: grid;
+            gap: 12px;
+        }
+
+        .match-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.2s;
+        }
+
+        .match-card:hover { border-color: var(--accent); }
+
+        .match-info {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .time-tag {
+            background: rgba(255,255,255,0.05);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 1.1rem;
+            color: var(--accent);
+        }
+
+        .duration-tag {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .player-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(20px);
+            padding: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            display: none;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 1000;
+        }
+
+        .player-bar.visible { display: flex; }
+
+        .progress-container {
+            width: 100%;
+            height: 6px;
+            background: #334155;
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            width: 0%;
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        .main-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+        }
+
+        .time-display {
+            font-family: monospace;
+            font-size: 1rem;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .comparison-badge {
+            position: absolute;
+            top: -30px;
+            background: var(--danger);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+        
+        .ab-flash {
+            animation: flash 0.3s ease-out;
+        }
+        @keyframes flash {
+            0% { background: var(--accent); }
+            100% { background: var(--bg); }
+        }
+    </style>
+</head>
+<body id="body">
+    <div class="container">
+        <h1>⚡ Repeat Verifier</h1>
+
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('jsonInput').click()">
+            <div id="dropText">📂 Перетащите <b>repeats_*.json</b> или кликните</div>
+            <input type="file" id="jsonInput" style="display:none" accept=".json">
+        </div>
+
+        <div class="audio-setup" id="audioSetup">
+            <div style="font-weight: 600;">📀 Требуется аудиофайл: <span id="fileNameHint" style="color:var(--accent)">...</span></div>
+            <div>
+                <button class="btn btn-accent" onclick="document.getElementById('audioInput').click()">📁 Выбрать аудиофайл</button>
+                <input type="file" id="audioInput" style="display:none" accept="audio/*">
+            </div>
+        </div>
+
+        <div class="matches-list" id="matchesList">
+            <!-- Сюда добавятся повторы -->
+        </div>
+    </div>
+
+    <div class="player-bar" id="playerBar">
+        <div class="progress-container" onclick="seek(event)">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="main-controls">
+            <button class="btn" onclick="skip(-5)">⏪ -5с</button>
+            <div class="time-display" id="timeDisplay">00:00 / 00:00</div>
+            <button class="btn" style="font-size: 1.2rem; padding: 10px 25px;" id="playBtn" onclick="togglePlay()">▶ Плей</button>
+            <button class="btn" onclick="skip(5)">+5с ⏩</button>
+            
+            <div style="height: 30px; width: 1px; background: #334155;"></div>
+            
+            <div style="position: relative;">
+                <div class="comparison-badge" id="abBadge" style="display:none">Mode A</div>
+                <button class="btn btn-accent" id="abBtn" onclick="toggleAB()" disabled title="Сравнить участки A и B">
+                    🔄 ПЕРЕКЛЮЧИТЬ (A/B)
+                </button>
+            </div>
+        </div>
+        <div style="text-align: center; font-size: 0.8rem; color: var(--text-dim);" id="trackLabel"></div>
+    </div>
+
+    <audio id="audioPlayer" style="display:none"></audio>
+
+    <script>
+        let data = null;
+        let currentMatch = null;
+        let mode = 'A'; // A or B
+        const audio = document.getElementById('audioPlayer');
+        
+        // --- Drag and Drop ---
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover'].forEach(e => {
+            dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('active'); });
+        });
+        ['dragleave', 'drop'].forEach(e => {
+            dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('active'); });
+        });
+        dropZone.addEventListener('drop', e => {
+            const file = e.dataTransfer.files[0];
+            if (file) handleJson(file);
+        });
+        document.getElementById('jsonInput').addEventListener('change', e => {
+            if (e.target.files[0]) handleJson(e.target.files[0]);
+        });
+
+        function handleJson(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                data = JSON.parse(e.target.result);
+                document.getElementById('fileNameHint').innerText = data.source_file;
+                document.getElementById('audioSetup').classList.add('visible');
+                document.getElementById('dropText').innerHTML = `✅ Отчет загружен: <b>${file.name}</b>`;
+                
+                // Автоматическая попытка загрузить аудио
+                if (data.source_file) {
+                    const tryLoad = (src, isAbsolute = false) => {
+                        return new Promise((resolve, reject) => {
+                            const tempAudio = new Audio();
+                            tempAudio.src = src;
+                            tempAudio.onloadedmetadata = () => resolve(src);
+                            tempAudio.onerror = () => reject();
+                            // Таймаут для проверки (некоторые браузеры не кидают ошибку сразу для локальных файлов)
+                            setTimeout(() => reject(), 1000);
+                        });
+                    };
+
+                    const relativeSrc = encodeURI(data.source_file).replace(/#/g, '%23').replace(/\?/g, '%3F');
+                    
+                    // Формируем file:/// путь для абсолютного адреса
+                    let absoluteSrc = '';
+                    if (data.source_full_path) {
+                        let path = data.source_full_path.replace(/\\/g, '/');
+                        if (!path.startsWith('/')) path = '/' + path;
+                        absoluteSrc = 'file://' + encodeURI(path).replace(/#/g, '%23').replace(/\?/g, '%3F');
+                    }
+
+                    console.log("Пытаемся загрузить аудио автоматичеки...");
+                    
+                    // Сначала пробуем относительный путь (самый надежный для браузера)
+                    tryLoad(relativeSrc)
+                        .then(src => setAudio(src, "Относительный путь"))
+                        .catch(() => {
+                            if (absoluteSrc) {
+                                return tryLoad(absoluteSrc).then(src => setAudio(src, "Полный путь"));
+                            }
+                            throw new Error("Load failed");
+                        })
+                        .catch(() => {
+                            console.log("Автоматическая загрузка не удалась.");
+                            document.getElementById('audioSetup').classList.add('visible');
+                        });
+                }
+
+                function setAudio(src, method) {
+                    console.log("Аудио загружено (" + method + ")");
+                    audio.src = src;
+                    document.getElementById('playerBar').classList.add('visible');
+                    document.getElementById('trackLabel').innerText = data.source_file;
+                    document.getElementById('audioSetup').classList.remove('visible');
+                }
+
+                renderMatches();
+            };
+            reader.readAsText(file);
+        }
+
+        // --- Audio Selection ---
+        document.getElementById('audioInput').addEventListener('change', e => {
+            const file = e.target.files[0];
+            if (file) {
+                audio.src = URL.createObjectURL(file);
+                document.getElementById('playerBar').classList.add('visible');
+                document.getElementById('trackLabel').innerText = file.name;
+            }
+        });
+
+        // --- UI Rendering ---
+        function renderMatches() {
+            const list = document.getElementById('matchesList');
+            list.innerHTML = '';
+            if (!data.matches.length) {
+                list.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--text-dim)">Повторов не обнаружено</div>';
+                return;
+            }
+
+            data.matches.forEach((m, idx) => {
+                const card = document.createElement('div');
+                card.className = 'match-card';
+                card.innerHTML = `
+                    <div class="match-info">
+                        <div class="time-tag">${m.time_a_fmt}</div>
+                        <div style="color: var(--text-dim)">⇔</div>
+                        <div class="time-tag">${m.time_b_fmt}</div>
+                        <div class="duration-tag">~${Math.round(m.duration)} сек</div>
+                    </div>
+                    <div class="controls">
+                        <button class="btn btn-sm" onclick="jumpTo(${m.time_a}, ${idx})">Слушать А</button>
+                        <button class="btn btn-sm" onclick="jumpTo(${m.time_b}, ${idx})">Слушать Б</button>
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+        }
+
+        // --- Playback Logic ---
+        function jumpTo(time, matchIdx) {
+            currentMatch = data.matches[matchIdx];
+            audio.currentTime = time;
+            audio.play();
+            mode = (time === currentMatch.time_a) ? 'A' : 'B';
+            updateABUI();
+        }
+
+        function togglePlay() {
+            if (audio.paused) audio.play();
+            else audio.pause();
+        }
+
+        function toggleAB() {
+            if (!currentMatch) return;
+            
+            const offset = (mode === 'A') ? (audio.currentTime - currentMatch.time_a) : (audio.currentTime - currentMatch.time_b);
+            
+            if (mode === 'A') {
+                audio.currentTime = currentMatch.time_b + offset;
+                mode = 'B';
+            } else {
+                audio.currentTime = currentMatch.time_a + offset;
+                mode = 'A';
+            }
+            
+            document.getElementById('body').classList.add('ab-flash');
+            setTimeout(() => document.getElementById('body').classList.remove('ab-flash'), 300);
+            updateABUI();
+        }
+
+        function updateABUI() {
+            const badge = document.getElementById('abBadge');
+            const btn = document.getElementById('abBtn');
+            btn.disabled = !currentMatch;
+            badge.style.display = currentMatch ? 'block' : 'none';
+            badge.innerText = `Mode ${mode}`;
+            badge.style.background = (mode === 'A') ? 'var(--accent)' : 'var(--danger)';
+        }
+
+        // --- Player UI Updates ---
+        audio.ontimeupdate = () => {
+            const pct = (audio.currentTime / audio.duration) * 100;
+            document.getElementById('progressBar').style.width = pct + '%';
+            document.getElementById('timeDisplay').innerText = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+        };
+
+        audio.onplay = () => { document.getElementById('playBtn').innerText = '⏸ Пауза'; };
+        audio.onpause = () => { document.getElementById('playBtn').innerText = '▶ Плей'; };
+
+        function formatTime(sec) {
+            if (isNaN(sec)) return '00:00';
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function skip(sec) {
+            audio.currentTime += sec;
+        }
+
+        function seek(e) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            audio.currentTime = pct * audio.duration;
+        }
+
+        // Keyboard Shortcuts
+        window.onkeydown = (e) => {
+            if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+            if (e.code === 'Tab' || e.code === 'KeyV') { e.preventDefault(); toggleAB(); }
+            if (e.code === 'ArrowLeft') { e.preventDefault(); skip(-5); }
+            if (e.code === 'ArrowRight') { e.preventDefault(); skip(5); }
+        }
+    </script>
+</body>
+</html>
