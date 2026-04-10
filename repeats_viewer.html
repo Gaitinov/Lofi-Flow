@@ -214,7 +214,7 @@
 </head>
 <body id="body">
     <div class="container">
-        <h1>⚡ Repeat Verifier</h1>
+        <h1>⚡ Repeat Verifier <button id="closeBtn" class="btn btn-sm" style="display:none; font-size: 0.8rem; padding: 5px 12px; margin-left: 15px; vertical-align: middle; background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid rgba(244,63,94,0.3);" onclick="resetApp()">❌ Закрыть</button></h1>
 
         <div class="drop-zone" id="dropZone" onclick="document.getElementById('jsonInput').click()">
             <div id="dropText">📂 Перетащите <b>repeats_*.json</b> или кликните</div>
@@ -283,62 +283,81 @@
         function handleJson(file) {
             const reader = new FileReader();
             reader.onload = (e) => {
-                data = JSON.parse(e.target.result);
-                document.getElementById('fileNameHint').innerText = data.source_file;
-                document.getElementById('audioSetup').classList.add('visible');
-                document.getElementById('dropText').innerHTML = `✅ Отчет загружен: <b>${file.name}</b>`;
-                
-                // Автоматическая попытка загрузить аудио
-                if (data.source_file) {
-                    const tryLoad = (src, isAbsolute = false) => {
-                        return new Promise((resolve, reject) => {
-                            const tempAudio = new Audio();
-                            tempAudio.src = src;
-                            tempAudio.onloadedmetadata = () => resolve(src);
-                            tempAudio.onerror = () => reject();
-                            // Таймаут для проверки (некоторые браузеры не кидают ошибку сразу для локальных файлов)
-                            setTimeout(() => reject(), 1000);
-                        });
-                    };
-
-                    const relativeSrc = encodeURI(data.source_file).replace(/#/g, '%23').replace(/\?/g, '%3F');
+                const rawData = e.target.result;
+                try {
+                    data = JSON.parse(rawData);
+                    // Сохраняем для авто-открытия
+                    try {
+                        localStorage.setItem('last_repeats_json', rawData);
+                        localStorage.setItem('last_repeats_filename', file.name);
+                    } catch(err) { console.warn("Не удалось сохранить в localStorage"); }
                     
-                    // Формируем file:/// путь для абсолютного адреса
-                    let absoluteSrc = '';
-                    if (data.source_full_path) {
-                        let path = data.source_full_path.replace(/\\/g, '/');
-                        if (!path.startsWith('/')) path = '/' + path;
-                        absoluteSrc = 'file://' + encodeURI(path).replace(/#/g, '%23').replace(/\?/g, '%3F');
-                    }
-
-                    console.log("Пытаемся загрузить аудио автоматичеки...");
-                    
-                    // Сначала пробуем относительный путь (самый надежный для браузера)
-                    tryLoad(relativeSrc)
-                        .then(src => setAudio(src, "Относительный путь"))
-                        .catch(() => {
-                            if (absoluteSrc) {
-                                return tryLoad(absoluteSrc).then(src => setAudio(src, "Полный путь"));
-                            }
-                            throw new Error("Load failed");
-                        })
-                        .catch(() => {
-                            console.log("Автоматическая загрузка не удалась.");
-                            document.getElementById('audioSetup').classList.add('visible');
-                        });
-                }
-
-                function setAudio(src, method) {
-                    console.log("Аудио загружено (" + method + ")");
-                    audio.src = src;
-                    document.getElementById('playerBar').classList.add('visible');
-                    document.getElementById('trackLabel').innerText = data.source_file;
-                    document.getElementById('audioSetup').classList.remove('visible');
-                }
-
-                renderMatches();
+                    processData(data, file.name);
+                } catch(err) { alert('Ошибка разбора JSON: ' + err.message); }
             };
             reader.readAsText(file);
+        }
+
+        function resetApp() {
+            if (confirm('Закрыть текущий отчет и вернуться к выбору?')) {
+                localStorage.removeItem('last_repeats_json');
+                localStorage.removeItem('last_repeats_filename');
+                location.reload();
+            }
+        }
+
+        function processData(jsonData, fileName) {
+            data = jsonData;
+            document.getElementById('closeBtn').style.display = 'inline-flex';
+            document.getElementById('fileNameHint').innerText = data.source_file;
+            document.getElementById('audioSetup').classList.add('visible');
+            document.getElementById('dropText').innerHTML = `✅ Отчет загружен: <b>${fileName || 'из памяти'}</b>`;
+            document.getElementById('dropZone').style.display = 'none';
+            
+            // Автоматическая попытка загрузить аудио
+            if (data.source_file) {
+                const tryLoad = (src, isAbsolute = false) => {
+                    return new Promise((resolve, reject) => {
+                        const tempAudio = new Audio();
+                        tempAudio.src = src;
+                        tempAudio.onloadedmetadata = () => resolve(src);
+                        tempAudio.onerror = () => reject();
+                        setTimeout(() => reject(), 1000);
+                    });
+                };
+
+                const relativeSrc = encodeURI(data.source_file).replace(/#/g, '%23').replace(/\?/g, '%3F');
+                let absoluteSrc = '';
+                if (data.source_full_path) {
+                    let path = data.source_full_path.replace(/\\/g, '/');
+                    if (!path.startsWith('/')) path = '/' + path;
+                    absoluteSrc = 'file://' + encodeURI(path).replace(/#/g, '%23').replace(/\?/g, '%3F');
+                }
+
+                console.log("Пытаемся загрузить аудио автоматически...");
+                tryLoad(relativeSrc)
+                    .then(src => setAudio(src, "Относительный путь"))
+                    .catch(() => {
+                        if (absoluteSrc) {
+                            return tryLoad(absoluteSrc).then(src => setAudio(src, "Полный путь"));
+                        }
+                        throw new Error("Load failed");
+                    })
+                    .catch(() => {
+                        console.log("Автоматическая загрузка не удалась.");
+                        document.getElementById('audioSetup').classList.add('visible');
+                    });
+            }
+
+            function setAudio(src, method) {
+                console.log("Аудио загружено (" + method + ")");
+                audio.src = src;
+                document.getElementById('playerBar').classList.add('visible');
+                document.getElementById('trackLabel').innerText = data.source_file;
+                document.getElementById('audioSetup').classList.remove('visible');
+            }
+
+            renderMatches();
         }
 
         // --- Audio Selection ---
@@ -454,6 +473,20 @@
             if (e.code === 'ArrowLeft') { e.preventDefault(); skip(-5); }
             if (e.code === 'ArrowRight') { e.preventDefault(); skip(5); }
         }
+
+        // Авто-загрузка последнего отчета
+        window.addEventListener('DOMContentLoaded', () => {
+            const lastJson = localStorage.getItem('last_repeats_json');
+            const lastFileName = localStorage.getItem('last_repeats_filename');
+            if (lastJson) {
+                try {
+                    const parsed = JSON.parse(lastJson);
+                    processData(parsed, lastFileName);
+                } catch(e) {
+                    localStorage.removeItem('last_repeats_json');
+                }
+            }
+        });
     </script>
 </body>
 </html>

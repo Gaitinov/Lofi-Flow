@@ -125,7 +125,7 @@
 </head>
 <body>
 
-<h1>🎵 LoFi-Flow Debug Viewer</h1>
+<h1>🎵 LoFi-Flow Debug Viewer <button id="closeBtn" class="btn btn-outline btn-sm" style="display:none; vertical-align: middle; margin-left: 15px;" onclick="closeFile()">❌ Закрыть</button></h1>
 
 <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
   📂 Перетащи <b>debug_cuts_*.json</b> сюда или кликни для выбора
@@ -301,12 +301,28 @@ fileInput.addEventListener('change', e => { if(e.target.files[0]) loadFile(e.tar
 function loadFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
+    const rawData = e.target.result;
     try {
-      debugData = JSON.parse(e.target.result);
+      debugData = JSON.parse(rawData);
+      
+      // Сохраняем для авто-открытия в следующий раз
+      try {
+        localStorage.setItem('last_debug_json', rawData);
+        localStorage.setItem('last_debug_filename', file.name);
+      } catch(e) { console.warn("Не удалось сохранить JSON в localStorage (возможно, слишком большой)"); }
+      
       render();
     } catch(err) { alert('Ошибка чтения JSON: ' + err.message); }
   };
   reader.readAsText(file);
+}
+
+function closeFile() {
+  if (confirm('Закрыть текущий файл и вернуться к выбору?')) {
+    localStorage.removeItem('last_debug_json');
+    localStorage.removeItem('last_debug_filename');
+    location.reload();
+  }
 }
 
 function fmtDur(sec) {
@@ -317,7 +333,8 @@ function fmtDur(sec) {
 
 function render() {
   document.getElementById('content').style.display = 'block';
-  dropZone.style.display = 'none';
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('closeBtn').style.display = 'inline-block';
 
   const d = debugData;
   const dur = d.source_duration;
@@ -641,6 +658,19 @@ window.addEventListener('load', () => {
       if (sec % 5 === 0 && sec !== lastSavedSec) savePlaybackPos();
     };
     audio.onpause = savePlaybackPos;
+
+    // Авто-загрузка последнего JSON
+    const lastJson = localStorage.getItem('last_debug_json');
+    if (lastJson) {
+      try {
+        debugData = JSON.parse(lastJson);
+        console.log("Восстановление состояния из последнего JSON...");
+        render();
+      } catch(e) {
+        console.error("Ошибка восстановления последнего JSON:", e);
+        localStorage.removeItem('last_debug_json');
+      }
+    }
 });
 
 function seekAudio(e) {
