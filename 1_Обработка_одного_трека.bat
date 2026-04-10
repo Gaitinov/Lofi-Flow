@@ -7,6 +7,6 @@ echo ===================================================
 echo   🎵 ЗАПУСК ОБРАБОТКИ ОДНОГО ТРЕКА (Mixer Single)
 echo ===================================================
 echo.
-python run_mixer.py
+python scripts\run_mixer.py
 echo.
 pause

@@ -8,19 +8,22 @@
 
 # Debug markers and logs
 debug_*.json
+repeats_*.json
 *_manual_cuts*.json
+logs/
 
 # Data folders
 lofi_tracks/
 merger_tracks/
-Исходники/
+sources/
+Final_versions/
+    
+# Script tools and bins
+bin/
 
 # Temp chunks
 _temp_chunks/
-
-# FFmpeg binaries (too large for git)
-ffmpeg.exe
-ffprobe.exe
+_temp_merger_chunks/
 
 # Python cache
 __pycache__/

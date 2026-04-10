@@ -7,6 +7,6 @@ echo ===================================================
 echo   ПОИСК ПОВТОРОВ В ФАЙЛЕ (Duplicate Finder)
 echo ===================================================
 echo.
-python find_repeats.py
+python scripts\find_repeats.py
 echo.
 pause

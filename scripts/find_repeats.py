@@ -16,9 +16,9 @@ if sys.platform == "win32":
     except AttributeError:
         pass
 
-SCRIPT_DIR = Path(__file__).parent
-FFMPEG = str(SCRIPT_DIR / "ffmpeg.exe") if (SCRIPT_DIR / "ffmpeg.exe").exists() else "ffmpeg"
-FFPROBE = str(SCRIPT_DIR / "ffprobe.exe") if (SCRIPT_DIR / "ffprobe.exe").exists() else "ffprobe"
+PROJECT_ROOT = Path(__file__).parent.parent
+FFMPEG = str(PROJECT_ROOT / "bin" / "ffmpeg.exe") if (PROJECT_ROOT / "bin" / "ffmpeg.exe").exists() else "ffmpeg"
+FFPROBE = str(PROJECT_ROOT / "bin" / "ffprobe.exe") if (PROJECT_ROOT / "bin" / "ffprobe.exe").exists() else "ffprobe"
 
 def fmt(seconds):
     h, rem = divmod(int(seconds), 3600)
@@ -195,13 +195,13 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "matches": results
         }
-        json_path = SCRIPT_DIR / f"repeats_{filepath.stem}.json"
+        json_path = PROJECT_ROOT / "logs" / f"repeats_{filepath.stem}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
         print(f"\n📄 Результаты сохранены в: {json_path.name}")
         
         # Пытаемся открыть веб-инструмент
-        viewer_path = SCRIPT_DIR / "repeats_viewer.html"
+        viewer_path = PROJECT_ROOT / "tools" / "repeats_viewer.html"
         if viewer_path.exists():
             print(f"🌐 Открытие визуального инструмента...")
             try:

@@ -42,10 +42,10 @@ OUTPUT_BITRATE = "192k"
 NUM_WORKERS = 6              # Кол-во параллельных процессов
 # =======================================
 
-SCRIPT_DIR = Path(__file__).parent
-FFMPEG = str(SCRIPT_DIR / "ffmpeg.exe") if (SCRIPT_DIR / "ffmpeg.exe").exists() else "ffmpeg"
-FFPROBE = str(SCRIPT_DIR / "ffprobe.exe") if (SCRIPT_DIR / "ffprobe.exe").exists() else "ffprobe"
-TEMP_DIR = SCRIPT_DIR / "_temp_merger_chunks"
+PROJECT_ROOT = Path(__file__).parent.parent
+FFMPEG = str(PROJECT_ROOT / "bin" / "ffmpeg.exe") if (PROJECT_ROOT / "bin" / "ffmpeg.exe").exists() else "ffmpeg"
+FFPROBE = str(PROJECT_ROOT / "bin" / "ffprobe.exe") if (PROJECT_ROOT / "bin" / "ffprobe.exe").exists() else "ffprobe"
+TEMP_DIR = PROJECT_ROOT / "_temp_merger_chunks"
 
 
 def fmt(seconds):
@@ -444,7 +444,7 @@ def assemble_mega_mix(all_segments, output_filename):
     if CLICK_REMOVAL:
         print(f"  ✨ Применяется фильтр анти-кликов: threshold={ADECLICK_THRESHOLD}")
 
-    output_path = SCRIPT_DIR / output_filename
+    output_path = PROJECT_ROOT / output_filename
     cmd.extend(["-b:a", OUTPUT_BITRATE, str(output_path)])
     
     # Запускаем экспорт с отображением прогресса
@@ -511,7 +511,7 @@ def assemble_mega_mix(all_segments, output_filename):
     scan_joints_for_clicks(output_path, time_map)
 
     # 5. Сохранение лога статов
-    debug_path = SCRIPT_DIR / f"debug_merger_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    debug_path = PROJECT_ROOT / "logs" / f"debug_merger_{time.strftime('%Y%m%d_%H%M%S')}.json"
     final_meta = get_duration(output_path)
     debug_log = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -544,7 +544,7 @@ def assemble_mega_mix(all_segments, output_filename):
 
 if __name__ == "__main__":
     check_ffmpeg()
-    folder = Path("merger_tracks")
+    folder = PROJECT_ROOT / "merger_tracks"
     if not folder.exists():
         folder.mkdir()
         print(f"Создана папка '{folder}'. Положите туда несколько MP3/FLAC файлов для склейки.")

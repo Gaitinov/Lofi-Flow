@@ -7,6 +7,6 @@ echo ===================================================
 echo    [ Lo-Fi Multi-Track Merger: Склейка папки ]
 echo ===================================================
 echo.
-python merge_tracks.py
+python scripts\merge_tracks.py
 echo.
 pause

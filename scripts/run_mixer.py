@@ -41,10 +41,10 @@ OUTPUT_BITRATE = "192k"
 NUM_WORKERS = 6              # Кол-во параллельных процессов
 # =======================================
 
-SCRIPT_DIR = Path(__file__).parent
-FFMPEG = str(SCRIPT_DIR / "ffmpeg.exe") if (SCRIPT_DIR / "ffmpeg.exe").exists() else "ffmpeg"
-FFPROBE = str(SCRIPT_DIR / "ffprobe.exe") if (SCRIPT_DIR / "ffprobe.exe").exists() else "ffprobe"
-TEMP_DIR = SCRIPT_DIR / "_temp_chunks"
+PROJECT_ROOT = Path(__file__).parent.parent
+FFMPEG = str(PROJECT_ROOT / "bin" / "ffmpeg.exe") if (PROJECT_ROOT / "bin" / "ffmpeg.exe").exists() else "ffmpeg"
+FFPROBE = str(PROJECT_ROOT / "bin" / "ffprobe.exe") if (PROJECT_ROOT / "bin" / "ffprobe.exe").exists() else "ffprobe"
+TEMP_DIR = PROJECT_ROOT / "_temp_chunks"
 
 
 def fmt(seconds):
@@ -436,7 +436,7 @@ def check_ffmpeg():
 
 def backup_source_files(input_file):
     """Создает резервную копию оригинального трека и всех JSON с вырезами."""
-    backup_base = input_file.parent.parent / "Исходники"
+    backup_base = input_file.parent.parent / "sources"
     backup_dir = backup_base / input_file.stem
     backup_dir.mkdir(parents=True, exist_ok=True)
     
@@ -445,7 +445,7 @@ def backup_source_files(input_file):
     # Бэкап оригинального аудио
     dest_audio = backup_dir / input_file.name
     if not dest_audio.exists() or dest_audio.stat().st_size != input_file.stat().st_size:
-        print(f"  💾 Бэкап оригинала: {input_file.name} -> Исходники/{input_file.stem}/")
+        print(f"  💾 Бэкап оригинала: {input_file.name} -> sources/{input_file.stem}/")
         shutil.copy2(input_file, dest_audio)
         copied_something = True
         
@@ -712,7 +712,7 @@ def process_mix(filepath, output_filename, original_file=None):
         "total_silence_cut": total_sil,
     }
     base_name = original_file.stem if original_file else filepath.stem
-    debug_path = SCRIPT_DIR / f"debug_{base_name}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    debug_path = PROJECT_ROOT / "logs" / f"debug_{base_name}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(debug_log, f, ensure_ascii=False, indent=2)
     print(f"  📝 Дебаг-лог сохранен: {debug_path.name}")
@@ -807,7 +807,7 @@ def process_mix(filepath, output_filename, original_file=None):
     if CLICK_REMOVAL:
         print(f"  ✨ Применяется фильтр анти-кликов: threshold={ADECLICK_THRESHOLD}")
 
-    output_path = SCRIPT_DIR / output_filename
+    output_path = PROJECT_ROOT / output_filename
     cmd.extend(["-b:a", OUTPUT_BITRATE, str(output_path)])
     
     # Запускаем экспорт с отображением прогресса
