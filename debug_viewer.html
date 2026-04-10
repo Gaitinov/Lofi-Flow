@@ -271,6 +271,7 @@ let debugData = null;
 let allTimeMapRows = [];
 let fileId = '';
 let currentPlayType = ''; 
+let lastTrackLabel = ''; 
 
 function getFileId(d) {
   if (!d || !d.source_file) return '';
@@ -539,6 +540,7 @@ function playAudio(type, timeSec, trackName) {
     audio.src = finalSrc;
     currentAudioSrc = finalSrc;
     nowPlaying.innerText = `Поёт: ${targetFile} (${typeLabel})`;
+    lastTrackLabel = nowPlaying.innerText;
     
     audio.onloadedmetadata = setupAndPlay;
     audio.onerror = () => {
@@ -570,6 +572,7 @@ function handleManualPlaybackFile(event) {
     const type = currentPlayType;
     const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
     document.getElementById('nowPlaying').innerText = `Поёт: ${file.name} (${typeLabel})`;
+    lastTrackLabel = document.getElementById('nowPlaying').innerText;
     document.getElementById('playbackError').style.display = 'none';
     
     audio.onloadedmetadata = () => {
@@ -638,7 +641,12 @@ window.addEventListener('load', () => {
     }
     updateMuteIcon();
 
-    audio.onplay = () => { if(playIcon) playIcon.innerText = '⏸ Пауза'; };
+    audio.onplay = () => { 
+        if(playIcon) playIcon.innerText = '⏸ Пауза'; 
+        if (nowPlaying.innerHTML.includes('защита браузера') && lastTrackLabel) {
+            nowPlaying.innerText = lastTrackLabel;
+        }
+    };
     audio.onpause = () => { if(playIcon) playIcon.innerText = '▶ Плей'; };
 
     audio.ontimeupdate = () => {
