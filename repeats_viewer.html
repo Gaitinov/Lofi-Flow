@@ -230,6 +230,26 @@
             </div>
         </div>
 
+        <div id="statsBar" style="display:none; background: var(--card); border-radius: var(--radius); padding: 15px 20px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05); text-align: center; justify-content: space-around; flex-wrap: wrap; gap: 15px;">
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Вероятность наличия повторов:<br><b id="statProb" style="color:var(--danger); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Максимальная схожесть:<br><b id="statSim" style="color:var(--accent); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Количество найденных:<br><b id="statCount" style="color:var(--text); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px; border-left: 1px solid rgba(255,255,255,0.1);">Уникального материала:<br><b id="statOrig" style="color:#10b981; font-size: 1.4rem;">...</b></div>
+        </div>
+        
+        <div id="copypasteBadge" style="display:none; width: 100%; margin-bottom: 20px; background: rgba(244,63,94,0.1); border: 2px solid var(--danger); padding: 15px; color: var(--danger); font-size: 1.2rem; font-weight: 800; border-radius: var(--radius); text-align: center; text-transform: uppercase; letter-spacing: 1px; box-sizing: border-box; box-shadow: 0 0 15px rgba(244,63,94,0.3);">
+            🚨 Обнаружена серийная копипаста целого блока треков!
+        </div>
+
+        <div id="controlsContainer" style="display:none; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-dim);">Список найденных совпадений:</div>
+            <select id="sortSelect" onchange="renderMatches()" style="background: var(--card); color: var(--text); border: 1px solid rgba(255,255,255,0.2); padding: 8px 15px; border-radius: var(--radius); outline: none; cursor: pointer; font-size: 0.95rem;">
+                <option value="time" style="background: var(--bg); color: var(--text);">⏳ В хронологическом порядке</option>
+                <option value="similarity" style="background: var(--bg); color: var(--text);">🎯 По наибольшей схожести</option>
+                <option value="duration" style="background: var(--bg); color: var(--text);">⏱ По наибольшей длительности</option>
+            </select>
+        </div>
+
         <div class="matches-list" id="matchesList">
             <!-- Сюда добавятся повторы -->
         </div>
@@ -303,6 +323,7 @@
             if (confirm('Закрыть текущий отчет и вернуться к выбору?')) {
                 localStorage.removeItem('last_repeats_json');
                 localStorage.removeItem('last_repeats_filename');
+                sessionStorage.setItem('ignore_preload', 'true');
                 location.reload();
             }
         }
@@ -314,6 +335,36 @@
             document.getElementById('audioSetup').classList.add('visible');
             document.getElementById('dropText').innerHTML = `✅ Отчет загружен: <b>${fileName || 'из памяти'}</b>`;
             document.getElementById('dropZone').style.display = 'none';
+            
+            if (data.probability !== undefined) {
+                document.getElementById('statsBar').style.display = 'flex';
+                const prob = data.probability;
+                const probEl = document.getElementById('statProb');
+                probEl.innerText = prob + '%';
+                probEl.style.color = prob > 95 ? 'var(--danger)' : (prob > 85 ? 'var(--accent)' : 'var(--text-dim)');
+                document.getElementById('statSim').innerText = (data.max_similarity * 100).toFixed(1) + '%';
+                document.getElementById('statCount').innerText = (data.matches ? data.matches.length : 0);
+                
+                if (data.original_content_duration !== undefined) {
+                    const originalStr = formatLongTime(data.original_content_duration);
+                    if (data.duration > 0) {
+                        const origPct = Math.round((data.original_content_duration / data.duration) * 100);
+                        document.getElementById('statOrig').innerHTML = `${originalStr} <span style="font-size: 0.9rem; color: var(--text-dim);">(${origPct}%)</span>`;
+                    } else {
+                        document.getElementById('statOrig').innerText = originalStr;
+                    }
+                } else {
+                    document.getElementById('statOrig').innerText = '-';
+                }
+            } else {
+                document.getElementById('statsBar').style.display = 'none';
+            }
+            
+            if (data.is_sequential_copypaste) {
+                document.getElementById('copypasteBadge').style.display = 'block';
+            } else {
+                document.getElementById('copypasteBadge').style.display = 'none';
+            }
             
             // Автоматическая попытка загрузить аудио
             if (data.source_file) {
@@ -374,13 +425,29 @@
         // --- UI Rendering ---
         function renderMatches() {
             const list = document.getElementById('matchesList');
+            const controls = document.getElementById('controlsContainer');
             list.innerHTML = '';
-            if (!data.matches.length) {
+            
+            if (!data || !data.matches || !data.matches.length) {
                 list.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--text-dim)">Повторов не обнаружено</div>';
+                if(controls) controls.style.display = 'none';
                 return;
             }
 
-            data.matches.forEach((m, idx) => {
+            if(controls) controls.style.display = 'flex';
+
+            let matches = [...data.matches];
+            const sortMode = document.getElementById('sortSelect') ? document.getElementById('sortSelect').value : 'time';
+            
+            if (sortMode === 'similarity') {
+                matches.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+            } else if (sortMode === 'duration') {
+                matches.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+            } else {
+                matches.sort((a, b) => window.parseFloat(a.time_a || 0) - window.parseFloat(b.time_a || 0));
+            }
+
+            matches.forEach((m, idx) => {
                 const card = document.createElement('div');
                 card.className = 'match-card';
                 card.innerHTML = `
@@ -389,6 +456,8 @@
                         <div style="color: var(--text-dim)">⇔</div>
                         <div class="time-tag">${m.time_b_fmt}</div>
                         <div class="duration-tag">~${Math.round(m.duration)} сек</div>
+                        ${m.similarity ? `<div style="color:#7dd3fc; background: rgba(56, 189, 248, 0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="Уровень схожести">🎯 ${(m.similarity*100).toFixed(1)}%</div>` : ''}
+                        ${m.is_copypaste_block ? `<div style="color:var(--danger); border: 1px solid var(--danger); background: rgba(244,63,94,0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="Этот отрезок скопирован вместе с соседними (составляет цельный блок)">🔗 Сдвиг ${formatLongTime(m.shift_seconds)}</div>` : ''}
                     </div>
                     <div class="controls">
                         <button class="btn btn-sm" onclick="jumpTo(${m.time_a}, ${idx})">Слушать А</button>
@@ -457,6 +526,15 @@
             return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
         }
 
+        function formatLongTime(sec) {
+            if (isNaN(sec)) return '0с';
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = Math.floor(sec % 60);
+            if (h > 0) return `${h}ч ${m}м ${s}с`;
+            return `${m}м ${s}с`;
+        }
+
         function skip(sec) {
             audio.currentTime += sec;
         }
@@ -477,7 +555,7 @@
 
         // Авто-загрузка последнего отчета
         window.addEventListener('DOMContentLoaded', () => {
-            if (window.PRELOADED_REPEATS_DATA) {
+            if (window.PRELOADED_REPEATS_DATA && !sessionStorage.getItem('ignore_preload')) {
                 console.log("Данные загружены из preloaded сгенерированного файла!");
                 processData(window.PRELOADED_REPEATS_DATA, "Последний анализ (" + window.PRELOADED_REPEATS_DATA.source_file + ")");
                 return;

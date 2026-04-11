@@ -36,12 +36,12 @@ def get_duration(filepath):
 
 def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
     print(f"\n🔍 Анализ файла: {filepath.name}")
-    duration = get_duration(filepath)
-    if duration == 0:
+    total_file_duration = get_duration(filepath)
+    if total_file_duration == 0:
         print("❌ Не удалось определить длительность файла.")
         return
 
-    print(f"⏳ Длительность: {fmt(duration)}")
+    print(f"⏳ Длительность: {fmt(total_file_duration)}")
     print(f"📦 Экстракция аудио-отпечатков (2 полосы: Bass + Melody)...")
 
     # Двухполосный анализ:
@@ -155,17 +155,19 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
                         
                         if corr_h > threshold:
                             is_new = True
-                            for z1, z2, dur in reported_zones:
+                            avg_corr = float((corr_l + corr_h) / 2.0)
+                            for z1, z2, dur, sim_list in reported_zones:
                                 if abs(i/pts_per_sec - (z2 + dur)) < 15 and abs(j/pts_per_sec - (z1 + dur)) < 15:
-                                    # Обновляем длительность (удаляем старое, добавляем новое)
-                                    reported_zones.remove((z1, z2, dur))
+                                    # Обновляем длительность
+                                    reported_zones.remove((z1, z2, dur, sim_list))
                                     new_dur = dur + (step_pts / pts_per_sec)
-                                    reported_zones.append((z1, z2, new_dur))
+                                    sim_list.append(avg_corr)
+                                    reported_zones.append((z1, z2, new_dur, sim_list))
                                     is_new = False
                                     break
                             
                             if is_new:
-                                reported_zones.append((j/pts_per_sec, i/pts_per_sec, window_sec))
+                                reported_zones.append((j/pts_per_sec, i/pts_per_sec, window_sec, [avg_corr]))
         
         buckets[key].append(i)
 
@@ -176,23 +178,135 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
     else:
         print(f"\n⚠️ ОБНАРУЖЕНЫ ПОВТОРЫ ТРЕКОВ ({len(reported_zones)}):")
         results = []
-        for start_a, start_b, duration in sorted(reported_zones):
-            if duration >= window_sec:
-                print(f"  🔁 Совпадение: {fmt(start_a)} и {fmt(start_b)} (длительность ~{int(duration)} сек)")
+        max_overall_sim = 0.0
+        
+        redundant_intervals = []
+        
+        for start_a, start_b, m_dur, sim_list in sorted(reported_zones):
+            if m_dur >= window_sec:
+                mean_sim = sum(sim_list) / len(sim_list) if sim_list else threshold
+                if mean_sim > max_overall_sim:
+                    max_overall_sim = mean_sim
+                print(f"  🔁 Совпадение: {fmt(start_a)} и {fmt(start_b)} (длительность ~{int(m_dur)} сек, схожесть: {mean_sim:.1%})")
+                
+                redundant_intervals.append((start_b, start_b + m_dur))
+                
                 results.append({
                     "time_a": start_a,
                     "time_b": start_b,
                     "time_a_fmt": fmt(start_a),
                     "time_b_fmt": fmt(start_b),
-                    "duration": round(duration, 1)
+                    "duration": round(m_dur, 1),
+                    "similarity": round(mean_sim, 3)
                 })
         
+        # Вычисляем общую вероятность наличия повторов
+        base_prob = 50.0 + (max_overall_sim - threshold) / (1.0 - threshold) * 40.0
+        
+        # Корректировка по длительности: защита от драм-лупов
+        max_single_match_dur = max(r["duration"] for r in results)
+        if max_single_match_dur < 16:
+            base_prob -= 50.0  # Нет ни одного длинного совпадения (это просто короткие сэмплы/лупы)
+        elif 16 <= max_single_match_dur <= 25:
+            base_prob -= 25.0  # Коротковато для целого трека
+        else:
+            base_prob += 15.0  # Есть как минимум один длинный цельный кусок (похоже на трек)
+            
+        # Корректировка по общей длительности совпадений
+        total_duration_matches = sum(r["duration"] for r in results)
+        if total_duration_matches < 10:
+            base_prob -= 30.0  # Слишком коротко, скорее всего просто повторяющийся сэмпл
+        elif 10 <= total_duration_matches <= 30:
+            base_prob -= 10.0  # Подозрительно, но для целого трека маловато
+        else:
+            base_prob += min(20.0, (total_duration_matches - 30) / 10.0 * 5.0)
+            
+        # Бонус за количество отдельных мест совпадений
+        count = len(results)
+        if count == 1:
+            base_prob -= 15.0  # Только один повтор - выше шанс случайности
+        elif 2 <= count <= 10:
+            base_prob += 10.0  # До 10 повторов - подозрительно
+        elif 10 < count <= 30:
+            base_prob += 25.0  # Куча повторов - явно что-то не так
+        else:
+            base_prob += 40.0  # Больше 30 - зацикленный кусок или огромная проблема
+
+        # Захват паттерна "копипаста": A, B, C -> A, B, C
+        sequential_bonus = 0.0
+        is_sequential_copypaste = False
+        if len(results) >= 2:
+            for idx in range(1, len(results)):
+                prev = results[idx-1]
+                curr = results[idx]
+                
+                # Если time_b растет вместе с time_a (хронологический порядок)
+                if curr["time_b"] > prev["time_b"]:
+                    sequential_bonus += 5.0
+                    
+                    # Если разница между оригиналом и копией почти одинаковая — это точный копипаст целого блока треков!
+                    shift_prev = prev["time_b"] - prev["time_a"]
+                    shift_curr = curr["time_b"] - curr["time_a"]
+                    if abs(shift_prev - shift_curr) < 15.0: # погрешность 15 секунд
+                        sequential_bonus += 15.0
+                        is_sequential_copypaste = True
+                        
+                        # Отмечаем оба элемента как часть копипасты с данным сдвигом
+                        prev["is_copypaste_block"] = True
+                        curr["is_copypaste_block"] = True
+                        avg_shift = (shift_prev + shift_curr) / 2.0
+                        prev["shift_seconds"] = round(avg_shift, 1)
+                        curr["shift_seconds"] = round(avg_shift, 1)
+                        
+                        # Заливаем "дыру" между неразрывными совпадениями
+                        redundant_intervals.append((prev["time_b"], curr["time_b"] + curr["duration"]))
+                        
+            base_prob += min(50.0, sequential_bonus)
+            
+        # Эвристика макро-зоны плотных повторов (Macro Dense Repeat Zone):
+        # В длинных диджейских миксах (по 2-3 часа) автор может взять целый час (60 мин)
+        # и скопировать его в конец. Но из-за наложенного диктором голоса, шума дождя, 
+        # или изменения скорости (pitch), алгоритм "поймает" со 100% уверенностью 
+        # лишь 5-10 треков из этого часа.
+        # Поэтому мы увеличиваем "радиус слияния" (gap) до 25 минут. Если между
+        # двумя пойманными дубликатами меньше 25 минут, мы бракуем весь промежуток.
+        results_b_sorted = sorted(results, key=lambda x: x["time_b"])
+        if len(results_b_sorted) >= 2:
+            for idx in range(1, len(results_b_sorted)):
+                prev_b = results_b_sorted[idx-1]
+                curr_b = results_b_sorted[idx]
+                gap = curr_b["time_b"] - (prev_b["time_b"] + prev_b["duration"])
+                if 0 < gap < 1500.0: # Меньше 25 минут между двумя "фейками"
+                    redundant_intervals.append((prev_b["time_b"] + prev_b["duration"], curr_b["time_b"]))
+
+        prob = min(100.0, max(0.0, base_prob)) if max_overall_sim > 0 else 0.0
+        
+        # Вычисление оригинальной длительности 
+        redundant_intervals.sort(key=lambda x: x[0])
+        merged_redundant = []
+        for interval in redundant_intervals:
+            if not merged_redundant:
+                merged_redundant.append(interval)
+            else:
+                last = merged_redundant[-1]
+                if interval[0] <= last[1]:
+                    merged_redundant[-1] = (last[0], max(last[1], interval[1]))
+                else:
+                    merged_redundant.append(interval)
+                    
+        total_redundant_sec = sum(end - start for start, end in merged_redundant)
+        original_sec = max(0, total_file_duration - total_redundant_sec)
+
         # Сохранение в JSON
         export_data = {
             "source_file": filepath.name,
             "source_full_path": str(filepath.absolute()),
-            "duration": duration,
+            "duration": total_file_duration,
+            "original_content_duration": round(original_sec, 1),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "probability": round(prob, 1),
+            "max_similarity": round(max_overall_sim, 3),
+            "is_sequential_copypaste": is_sequential_copypaste,
             "matches": results
         }
         json_path = PROJECT_ROOT / "logs" / f"repeats_{filepath.stem}.json"

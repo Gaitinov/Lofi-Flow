@@ -436,6 +436,10 @@ def check_ffmpeg():
 
 def backup_source_files(input_file):
     """Создает резервную копию оригинального трека и всех JSON с вырезами."""
+    manual_files = _find_manual_cuts_files(input_file)
+    if not manual_files:
+        return  # Не делаем бэкап, если нет ни одного JSON-файла разметки
+
     backup_base = input_file.parent.parent / "sources"
     backup_dir = backup_base / input_file.stem
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -450,7 +454,6 @@ def backup_source_files(input_file):
         copied_something = True
         
     # Бэкап JSON файлов с маркёрами (нечёткий поиск)
-    manual_files = _find_manual_cuts_files(input_file)
     for manual_path in manual_files:
         dest_json = backup_dir / manual_path.name
         if not dest_json.exists() or dest_json.stat().st_mtime < manual_path.stat().st_mtime:
