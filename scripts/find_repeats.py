@@ -200,6 +200,14 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
             json.dump(export_data, f, ensure_ascii=False, indent=2)
         print(f"\n📄 Результаты сохранены в: {json_path.name}")
         
+        # Авто-загрузка: пишем данные в JS файл рядом с HTML для локального обхода CORS
+        js_data_path = PROJECT_ROOT / "tools" / "latest_repeats_data.js"
+        try:
+            with open(js_data_path, "w", encoding="utf-8") as js_f:
+                js_f.write(f"window.PRELOADED_REPEATS_DATA = {json.dumps(export_data, ensure_ascii=False)};")
+        except Exception:
+            pass
+
         # Пытаемся открыть веб-инструмент
         viewer_path = PROJECT_ROOT / "tools" / "repeats_viewer.html"
         if viewer_path.exists():

@@ -10,6 +10,7 @@
 debug_*.json
 repeats_*.json
 *_manual_cuts*.json
+tools/latest_repeats_data.js
 logs/
 
 # Data folders

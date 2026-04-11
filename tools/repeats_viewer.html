@@ -211,6 +211,7 @@
             100% { background: var(--bg); }
         }
     </style>
+    <script src="latest_repeats_data.js" onerror="console.log('No preloaded data found')"></script>
 </head>
 <body id="body">
     <div class="container">
@@ -476,6 +477,12 @@
 
         // Авто-загрузка последнего отчета
         window.addEventListener('DOMContentLoaded', () => {
+            if (window.PRELOADED_REPEATS_DATA) {
+                console.log("Данные загружены из preloaded сгенерированного файла!");
+                processData(window.PRELOADED_REPEATS_DATA, "Последний анализ (" + window.PRELOADED_REPEATS_DATA.source_file + ")");
+                return;
+            }
+            
             const lastJson = localStorage.getItem('last_repeats_json');
             const lastFileName = localStorage.getItem('last_repeats_filename');
             if (lastJson) {
