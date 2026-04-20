@@ -8,8 +8,9 @@ import tkinter as tk
 from tkinter import filedialog
 from pathlib import Path
 from collections import defaultdict
+from config_loader import S
 
-# Фикс кодировки для Windows
+# Windows encoding fix
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -21,11 +22,13 @@ FFMPEG = str(PROJECT_ROOT / "bin" / "ffmpeg.exe") if (PROJECT_ROOT / "bin" / "ff
 FFPROBE = str(PROJECT_ROOT / "bin" / "ffprobe.exe") if (PROJECT_ROOT / "bin" / "ffprobe.exe").exists() else "ffprobe"
 
 def fmt(seconds):
+    """Formats seconds into HH:MM:SS string."""
     h, rem = divmod(int(seconds), 3600)
     m, s = divmod(rem, 60)
     return f"{h:02}:{m:02}:{s:02}"
 
 def get_duration(filepath):
+    """Returns duration of audio file in seconds using ffprobe."""
     cmd = [FFPROBE, "-v", "quiet", "-show_format", "-show_streams", "-print_format", "json", str(filepath)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
@@ -34,19 +37,22 @@ def get_duration(filepath):
     except Exception:
         return 0
 
-def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
-    print(f"\n🔍 Анализ файла: {filepath.name}")
+def find_repeats_high_precision(filepath, window_sec=None, threshold=None):
+    """Analyses audio file for repeated segments using bass and melody fingerprints."""
+    if window_sec is None: window_sec = S["repeat_detection"]["window_sec"]
+    if threshold is None: threshold = S["repeat_detection"]["similarity_threshold"]
+    print(f"\n🔍 Analyzing file: {filepath.name}")
     total_file_duration = get_duration(filepath)
     if total_file_duration == 0:
-        print("❌ Не удалось определить длительность файла.")
+        print("❌ Failed to determine file duration.")
         return
 
-    print(f"⏳ Длительность: {fmt(total_file_duration)}")
-    print(f"📦 Экстракция аудио-отпечатков (2 полосы: Bass + Melody)...")
+    print(f"⏳ Duration: {fmt(total_file_duration)}")
+    print(f"📦 Extracting audio fingerprints (2 bands: Bass + Melody)...")
 
-    # Двухполосный анализ:
-    # Канал 0 (L) - низкие частоты (бас, ритм)
-    # Канал 1 (R) - высокие частоты (мелодия)
+    # Dual-band analysis:
+    # Low frequencies (bass, rhythm)
+    # High frequencies (melody)
     target_sr = 1000
     filter_graph = "[0:a]lowpass=f=250,pan=mono|c0=c0[low];[0:a]highpass=f=250,pan=mono|c0=c0[high];[low][high]amerge=inputs=2"
     
@@ -61,35 +67,34 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
     audio_bytes, stderr = process.communicate()
     
     if process.returncode != 0:
-        print(f"❌ Ошибка FFmpeg: {stderr.decode('utf-8', errors='replace')}")
+        print(f"❌ FFmpeg error: {stderr.decode('utf-8', errors='replace')}")
         return
 
-    # Данные теперь 2-канальные (L=Low, R=High)
+    # Data is 2-channel (L=Low, R=High)
     audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
     audio = audio.reshape(-1, 2)
     
-    # 1. Вычисляем огибающие для обеих полос (RMS на частоте 2 Гц)
+    # 1. Compute envelopes for both bands (RMS at 2 Hz)
     pts_per_sec = 2
     spp = target_sr // pts_per_sec
     num_pts = audio.shape[0] // spp
     
     if num_pts < 30:
-        print("❌ Файл слишком короткий.")
+        print("❌ File too short.")
         return
 
-    # Решейпим и считаем RMS для каждого канала отдельно
-    # audio.shape = (samples, 2)
+    # Calculate RMS for each channel separately
     reshaped = audio[:num_pts * spp].reshape(num_pts, spp, 2)
-    envelope = np.sqrt(np.mean(reshaped**2, axis=1)) # Результат: (num_pts, 2)
+    envelope = np.sqrt(np.mean(reshaped**2, axis=1)) # Result: (num_pts, 2)
     
     env_low = envelope[:, 0]
     env_high = envelope[:, 1]
     
-    # 2. Поиск дубликатов
-    print(f"🧪 Поиск совпадений по ритму и мелодии...")
+    # 2. Search for duplicates
+    print(f"🧪 Searching for rhythm and melody matches...")
     
     win_pts = window_sec * pts_per_sec
-    step_pts = pts_per_sec * 2 # Проверка каждые 2 секунды для скорости
+    step_pts = pts_per_sec * 2 # Check every 2 seconds for speed
     
     matches = []
     buckets = defaultdict(list)
@@ -100,17 +105,16 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
     total_steps = (num_pts - win_pts) // step_pts
     last_print = 0
 
-    # Предварительная нормализация для экстремально быстрого расчета корреляции
-    # (x - mean) / std
+    # Fast correlation helper: (x - mean) / std
     def fast_norm(x):
         mu = np.mean(x)
         sd = np.std(x)
         return (x - mu) / sd if sd > 1e-6 else x - mu
 
-    print(f"🧪 Анализ (поиск по 30-минутным интервалам)...")
+    print(f"🧪 Analyzing (searching 30min intervals)...")
 
     for idx, i in enumerate(range(0, num_pts - win_pts, step_pts)):
-        # Отображение прогресса
+        # Progress display
         now = time.time()
         if now - last_print > 0.5:
             last_print = now
@@ -119,7 +123,7 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
             eta = (elapsed / progress) - elapsed if progress > 0 else 0
             filled = int(30 * progress)
             bar = "█" * filled + "░" * (30 - filled)
-            print(f"\r  [{bar}] {progress*100:5.1f}% | Осталось: ~{fmt(eta)}  ", end="", flush=True)
+            print(f"\r  [{bar}] {progress*100:5.1f}% | ETA: ~{fmt(eta)}  ", end="", flush=True)
 
         seg_low = env_low[i : i + win_pts]
         seg_high = env_high[i : i + win_pts]
@@ -129,15 +133,15 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
         
         if m_low < 1.0 and m_high < 1.0: continue
         
-        # Нормализуем текущий сегмент один раз
+        # Normalize current segment once
         n_seg_low = fast_norm(seg_low)
         n_seg_high = fast_norm(seg_high)
         
-        # Ключ включает характеристики обеих полос
+        # Key includes characteristics of both bands
         granularity = 100
         key = (round(m_low / granularity) * granularity, round(m_high / granularity) * granularity)
         
-        # Проверяем текущую корзину и соседние (для надежности при пограничных значениях)
+        # Check current bucket and neighbors for reliability
         for d_low in [-granularity, 0, granularity]:
             for d_high in [-granularity, 0, granularity]:
                 neighbor_key = (key[0] + d_low, key[1] + d_high)
@@ -158,7 +162,7 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
                             avg_corr = float((corr_l + corr_h) / 2.0)
                             for z1, z2, dur, sim_list in reported_zones:
                                 if abs(i/pts_per_sec - (z2 + dur)) < 15 and abs(j/pts_per_sec - (z1 + dur)) < 15:
-                                    # Обновляем длительность
+                                    # Update duration
                                     reported_zones.remove((z1, z2, dur, sim_list))
                                     new_dur = dur + (step_pts / pts_per_sec)
                                     sim_list.append(avg_corr)
@@ -171,12 +175,12 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
         
         buckets[key].append(i)
 
-    print(f"✨ Анализ завершен за {time.time() - start_time:.1f} сек.")
+    print(f"✨ Analysis completed in {time.time() - start_time:.1f} sec.")
 
     if not reported_zones:
-        print("✅ Повторений не обнаружено. Скрипт проверил ритм и мелодию отдельно.")
+        print("✅ No repeats detected. Checked rhythm and melody separately.")
     else:
-        print(f"\n⚠️ ОБНАРУЖЕНЫ ПОВТОРЫ ТРЕКОВ ({len(reported_zones)}):")
+        print(f"\n⚠️ DETECTED REPEATS ({len(reported_zones)}):")
         results = []
         max_overall_sim = 0.0
         
@@ -187,7 +191,7 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
                 mean_sim = sum(sim_list) / len(sim_list) if sim_list else threshold
                 if mean_sim > max_overall_sim:
                     max_overall_sim = mean_sim
-                print(f"  🔁 Совпадение: {fmt(start_a)} и {fmt(start_b)} (длительность ~{int(m_dur)} сек, схожесть: {mean_sim:.1%})")
+                print(f"  🔁 Match: {fmt(start_a)} and {fmt(start_b)} (dur ~{int(m_dur)} sec, similarity: {mean_sim:.1%})")
                 
                 redundant_intervals.append((start_b, start_b + m_dur))
                 
@@ -200,39 +204,39 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
                     "similarity": round(mean_sim, 3)
                 })
         
-        # Вычисляем общую вероятность наличия повторов
+        # Calculate overall probability
         base_prob = 50.0 + (max_overall_sim - threshold) / (1.0 - threshold) * 40.0
         
-        # Корректировка по длительности: защита от драм-лупов
+        # Duration correction: protection against short drum loops
         max_single_match_dur = max(r["duration"] for r in results)
         if max_single_match_dur < 16:
-            base_prob -= 50.0  # Нет ни одного длинного совпадения (это просто короткие сэмплы/лупы)
+            base_prob -= 50.0  # No long matches (likely short samples/loops)
         elif 16 <= max_single_match_dur <= 25:
-            base_prob -= 25.0  # Коротковато для целого трека
+            base_prob -= 25.0  # Too short for a full track
         else:
-            base_prob += 15.0  # Есть как минимум один длинный цельный кусок (похоже на трек)
+            base_prob += 15.0  # At least one long solid match
             
-        # Корректировка по общей длительности совпадений
+        # Overall duration correction
         total_duration_matches = sum(r["duration"] for r in results)
         if total_duration_matches < 10:
-            base_prob -= 30.0  # Слишком коротко, скорее всего просто повторяющийся сэмпл
+            base_prob -= 30.0  # Too short
         elif 10 <= total_duration_matches <= 30:
-            base_prob -= 10.0  # Подозрительно, но для целого трека маловато
+            base_prob -= 10.0  # Suspicious but low for a full track
         else:
             base_prob += min(20.0, (total_duration_matches - 30) / 10.0 * 5.0)
             
-        # Бонус за количество отдельных мест совпадений
+        # Bonus based on number of repeat locations
         count = len(results)
         if count == 1:
-            base_prob -= 15.0  # Только один повтор - выше шанс случайности
+            base_prob -= 15.0  # Single repeat - higher chance of coincidence
         elif 2 <= count <= 10:
-            base_prob += 10.0  # До 10 повторов - подозрительно
+            base_prob += 10.0  
         elif 10 < count <= 30:
-            base_prob += 25.0  # Куча повторов - явно что-то не так
+            base_prob += 25.0  
         else:
-            base_prob += 40.0  # Больше 30 - зацикленный кусок или огромная проблема
+            base_prob += 40.0  # Huge issue or looped segment
 
-        # Захват паттерна "копипаста": A, B, C -> A, B, C
+        # Capture "copy-paste" patterns: A, B, C -> A, B, C
         sequential_bonus = 0.0
         is_sequential_copypaste = False
         if len(results) >= 2:
@@ -240,48 +244,44 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
                 prev = results[idx-1]
                 curr = results[idx]
                 
-                # Если time_b растет вместе с time_a (хронологический порядок)
+                # If time_b increases with time_a (chronological order)
                 if curr["time_b"] > prev["time_b"]:
                     sequential_bonus += 5.0
                     
-                    # Если разница между оригиналом и копией почти одинаковая — это точный копипаст целого блока треков!
+                    # If shift between original and copy is nearly identical - it's a block copypaste!
                     shift_prev = prev["time_b"] - prev["time_a"]
                     shift_curr = curr["time_b"] - curr["time_a"]
-                    if abs(shift_prev - shift_curr) < 15.0: # погрешность 15 секунд
+                    if abs(shift_prev - shift_curr) < 15.0: # 15s margin
                         sequential_bonus += 15.0
                         is_sequential_copypaste = True
                         
-                        # Отмечаем оба элемента как часть копипасты с данным сдвигом
+                        # Mark as part of copypaste block
                         prev["is_copypaste_block"] = True
                         curr["is_copypaste_block"] = True
                         avg_shift = (shift_prev + shift_curr) / 2.0
                         prev["shift_seconds"] = round(avg_shift, 1)
                         curr["shift_seconds"] = round(avg_shift, 1)
                         
-                        # Заливаем "дыру" между неразрывными совпадениями
+                        # Fill gaps between matches
                         redundant_intervals.append((prev["time_b"], curr["time_b"] + curr["duration"]))
                         
             base_prob += min(50.0, sequential_bonus)
             
-        # Эвристика макро-зоны плотных повторов (Macro Dense Repeat Zone):
-        # В длинных диджейских миксах (по 2-3 часа) автор может взять целый час (60 мин)
-        # и скопировать его в конец. Но из-за наложенного диктором голоса, шума дождя, 
-        # или изменения скорости (pitch), алгоритм "поймает" со 100% уверенностью 
-        # лишь 5-10 треков из этого часа.
-        # Поэтому мы увеличиваем "радиус слияния" (gap) до 25 минут. Если между
-        # двумя пойманными дубликатами меньше 25 минут, мы бракуем весь промежуток.
+        # Macro Dense Repeat Zone heuristic:
+        # In long DJ mixes, an author might copy a whole hour.
+        # If matches are closer than 25 min, discard the entire interval.
         results_b_sorted = sorted(results, key=lambda x: x["time_b"])
         if len(results_b_sorted) >= 2:
             for idx in range(1, len(results_b_sorted)):
                 prev_b = results_b_sorted[idx-1]
                 curr_b = results_b_sorted[idx]
                 gap = curr_b["time_b"] - (prev_b["time_b"] + prev_b["duration"])
-                if 0 < gap < 1500.0: # Меньше 25 минут между двумя "фейками"
+                if 0 < gap < 1500.0: # Less than 25 min gap
                     redundant_intervals.append((prev_b["time_b"] + prev_b["duration"], curr_b["time_b"]))
 
         prob = min(100.0, max(0.0, base_prob)) if max_overall_sim > 0 else 0.0
         
-        # Вычисление оригинальной длительности 
+        # Calculate original duration 
         redundant_intervals.sort(key=lambda x: x[0])
         merged_redundant = []
         for interval in redundant_intervals:
@@ -297,7 +297,7 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
         total_redundant_sec = sum(end - start for start, end in merged_redundant)
         original_sec = max(0, total_file_duration - total_redundant_sec)
 
-        # Сохранение в JSON
+        # JSON Export
         export_data = {
             "source_file": filepath.name,
             "source_full_path": str(filepath.absolute()),
@@ -312,9 +312,9 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
         json_path = PROJECT_ROOT / "logs" / f"repeats_{filepath.stem}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
-        print(f"\n📄 Результаты сохранены в: {json_path.name}")
+        print(f"\n📄 Results saved to: {json_path.name}")
         
-        # Авто-загрузка: пишем данные в JS файл рядом с HTML для локального обхода CORS
+        # Preload data for viewer
         js_data_path = PROJECT_ROOT / "tools" / "latest_repeats_data.js"
         try:
             with open(js_data_path, "w", encoding="utf-8") as js_f:
@@ -322,10 +322,10 @@ def find_repeats_high_precision(filepath, window_sec=12, threshold=0.92):
         except Exception:
             pass
 
-        # Пытаемся открыть веб-инструмент
+        # Open visual tool
         viewer_path = PROJECT_ROOT / "tools" / "repeats_viewer.html"
         if viewer_path.exists():
-            print(f"🌐 Открытие визуального инструмента...")
+            print(f"🌐 Opening visual viewer tool...")
             try:
                 os.startfile(str(viewer_path))
             except: pass
@@ -336,12 +336,12 @@ def main():
     root.attributes("-topmost", True)
     
     print("==========================================")
-    print("   🔎 ВЫСОКОТОЧНЫЙ ПОИСК ПОВТОРОВ")
-    print("   (Анализ Бас + Мелодия)")
+    print("   🔎 HIGH PRECISION REPEAT DETECTION")
+    print("   (Bass + Melody Analysis)")
     print("==========================================")
     
     file_path = filedialog.askopenfilename(
-        title="Выберите аудиофайл",
+        title="Select audio file",
         filetypes=[("Audio Files", "*.mp3 *.wav *.flac *.m4a *.ogg"), ("All Files", "*.*")]
     )
     
@@ -351,9 +351,9 @@ def main():
     try:
         find_repeats_high_precision(Path(file_path))
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Error: {e}")
     
-    print("\nНажмите Enter...")
+    print("\nPress Enter...")
     input()
 
 if __name__ == "__main__":

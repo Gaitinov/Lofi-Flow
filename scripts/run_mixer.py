@@ -1,6 +1,6 @@
 """
-Lo-Fi Mixer v5 — Параллельная версия с анализом громкости.
-FFmpeg напрямую + многопоточность + нормализация громкости.
+Lo-Fi Mixer v5 — Parallel version with volume analysis.
+FFmpeg direct + multithreading + volume normalization.
 """
 import os
 import sys
@@ -12,34 +12,36 @@ import shutil
 import psutil
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from pathlib import Path
+from config_loader import S
 
-# Фикс кодировки для Windows
+# Windows encoding fix
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except AttributeError:
         pass
 
-# ============== НАСТРОЙКИ ==============
-SILENCE_THRESH = -40         # Порог тишины (дБ). Смягчен, чтобы ловить фоновый шум (не идеальный ноль).
-MIN_SILENCE_LEN = 0.5        # Мин. длина тишины (сек). Захватываем более короткие паузы.
-QUIET_THRESH = -30           # Порог "тихого звука" (дБ). Хвосты/вступления ниже этого будут вырезаны вместе с тишиной.
-QUIET_SCAN_STEP = 0.5        # Шаг сканирования тихих хвостов (секунды).
-FADE_SEC = 1.2               # Длина кроссфейда между песнями (в сек). Увеличено для плавности.
+from config_loader import S
 
-# Фильтры артефактов (Авто-удаление кликов)
-CLICK_REMOVAL = True         # Автоматическое удаление щелчков и кликов встроенным фильтром FFmpeg
-ADECLICK_WINDOW = 55         # Размер окна в мс
-ADECLICK_OVERLAP = 75        # Перекрытие окон (%)
-ADECLICK_THRESHOLD = 2       # Порог обнаружения (чем ниже, тем агрессивнее. Было 10, стало 2)
-ADECLICK_BURST = 2           # Сколько соседних сэмплов считать кликом
+# ============== SETTINGS (from config_loader) ==============
+SILENCE_THRESH = S["silence"]["thresh_db"]
+MIN_SILENCE_LEN = S["silence"]["min_len_sec"]
+QUIET_THRESH = S["silence"]["quiet_thresh_db"]
+QUIET_SCAN_STEP = S["silence"]["quiet_scan_step"]
 
-# Настройки громкости
-NORMALIZE_AUDIO = False      # Вкл/выкл выравнивание громкости.
-TARGET_LOUDNESS = -14.0      
-OUTPUT_BITRATE = "192k"
-NUM_WORKERS = 6              # Кол-во параллельных процессов
-# =======================================
+FADE_SEC = S["mixing"]["fade_sec"]
+NORMALIZE_AUDIO = S["mixing"]["normalize_audio"]
+TARGET_LOUDNESS = S["mixing"]["target_loudness_lufs"]
+OUTPUT_BITRATE = S["mixing"]["output_bitrate"]
+
+CLICK_REMOVAL = S["artifact_removal"]["enabled"]
+ADECLICK_WINDOW = S["artifact_removal"]["window_ms"]
+ADECLICK_OVERLAP = S["artifact_removal"]["overlap_pct"]
+ADECLICK_THRESHOLD = S["artifact_removal"]["threshold"]
+ADECLICK_BURST = S["artifact_removal"]["burst"]
+
+NUM_WORKERS = S["system"]["num_workers"]
+# ==========================================================
 
 PROJECT_ROOT = Path(__file__).parent.parent
 FFMPEG = str(PROJECT_ROOT / "bin" / "ffmpeg.exe") if (PROJECT_ROOT / "bin" / "ffmpeg.exe").exists() else "ffmpeg"
@@ -54,37 +56,33 @@ def fmt(seconds):
 
 
 def _normalize_name(name):
-    """Убирает эмодзи, спецсимволы Unicode и схлопывает пробелы для нечёткого сравнения имён."""
-    # Убираем все символы вне ASCII-диапазона, кроме кириллицы
+    """Removes emojis, Unicode special chars and collapses spaces for fuzzy name matching."""
     cleaned = re.sub(r'[^\w\s\[\](){}\-.,!#&\'а-яА-ЯёЁ]', '', name, flags=re.UNICODE)
-    # Схлопываем множественные пробелы в один
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned.lower()
 
 
 def safe_run(cmd, **kwargs):
-    """Безопасный запуск процесса с проверкой памяти и повторами на WinError 1455."""
+    """Safe process launch with memory check and WinError 1455 retries."""
     max_retries = 5
     for attempt in range(max_retries):
-        # 1. Проверка физической памяти перед запуском
         mem = psutil.virtual_memory()
-        if mem.available < 400 * 1024 * 1024: # Меньше 400 МБ
+        if mem.available < 400 * 1024 * 1024: 
             time.sleep(2)
             continue
             
         try:
             return subprocess.run(cmd, **kwargs)
         except OSError as e:
-            # WinError 1455: Файл подкачки слишком мал
             if getattr(e, 'winerror', None) == 1455 and attempt < max_retries - 1:
                 time.sleep(3 + attempt * 2)
                 continue
             raise e
         except MemoryError:
-            print("  ⚠️ MemoryError. Ждем 5 сек...")
+            print("  ⚠️ MemoryError. Waiting 5 sec...")
             time.sleep(5)
             continue
-    return subprocess.run(cmd, **kwargs) # Последняя попытка без отлова
+    return subprocess.run(cmd, **kwargs) 
 
 
 def get_duration(filepath):
@@ -93,20 +91,19 @@ def get_duration(filepath):
     r = safe_run(cmd, capture_output=True, text=True, encoding="utf-8")
     
     if not r.stdout or not r.stdout.strip():
-        # ffprobe вернул пустоту — попробовать ещё раз без quiet
         cmd_retry = [FFPROBE, "-v", "error", "-print_format", "json",
                      "-show_format", "-show_streams", str(filepath)]
         r = safe_run(cmd_retry, capture_output=True, text=True, encoding="utf-8")
         if not r.stdout or not r.stdout.strip():
-            print(f"  ⚠ ffprobe не смог прочитать файл: {filepath}")
+            print(f"  ⚠ ffprobe could not read file: {filepath}")
             if r.stderr:
-                print(f"    Ошибка: {r.stderr[:300]}")
+                print(f"    Error: {r.stderr[:300]}")
             return {"duration": 0, "bitrate": 0, "channels": 2, "sample_rate": "44100"}
     
     try:
         info = json.loads(r.stdout)
     except json.JSONDecodeError:
-        print(f"  ⚠ ffprobe вернул некорректный JSON: {r.stdout[:200]}")
+        print(f"  ⚠ ffprobe returned invalid JSON: {r.stdout[:200]}")
         return {"duration": 0, "bitrate": 0, "channels": 2, "sample_rate": "44100"}
     
     return {
@@ -118,21 +115,18 @@ def get_duration(filepath):
 
 
 def scan_joints_for_clicks(filepath, time_map):
-    """Сканирует стыки в итоговом файле и выводит в консоль силу скачков."""
+    """Scans joints in the final file and outputs the jump strength to console."""
     if not time_map or len(time_map) < 2:
         return
     
-    # Определяем реальный sample rate, чтобы избежать ресэмплинга при проверке
     meta = get_duration(filepath)
     sr = meta.get("sample_rate", 44100)
     
-    print(f"\n🔍 Проверка стыков на клики (post-render scan, {sr}Hz)...")
+    print(f"\n🔍 Scanning joints for clicks (post-render scan, {sr}Hz)...")
     
-    # Берем по 100мс вокруг каждого стыка
     window = 0.05 
     for i in range(len(time_map) - 1):
         joint = time_map[i]["output_end"]
-        # Используем raw PCM (s16le) без заголовков, чтобы избежать ошибок с WAV
         temp_raw = TEMP_DIR / f"joint_test_{i}.raw"
         start = max(0, joint - window)
         cmd = [
@@ -148,7 +142,6 @@ def scan_joints_for_clicks(filepath, time_map):
                 with open(temp_raw, "rb") as f:
                     data = f.read()
                     import struct
-                    # Читаем все доступные сэмплы (signed short, 2 байта)
                     num_samples = len(data) // 2
                     if num_samples < 2: continue
                     
@@ -161,9 +154,9 @@ def scan_joints_for_clicks(filepath, time_map):
                             max_jump = jump
                     
                     status = "✅ OK" if max_jump < 0.15 else "⚠️ CLICK?"
-                    print(f"  Стык {i+1} ({fmt(joint)}): скачок {max_jump:.3f} {status}")
+                    print(f"  Joint {i+1} ({fmt(joint)}): jump {max_jump:.3f} {status}")
             except Exception as e:
-                print(f"  Ошибка сканирования стыка {i+1}: {e}")
+                print(f"  Error scanning joint {i+1}: {e}")
             finally:
                 temp_raw.unlink(missing_ok=True)
 
@@ -209,7 +202,7 @@ def detect_silences_parallel(filepath, total_duration):
     completed = 0
     t0 = time.time()
     
-    print(f"  Параллельный поиск ({NUM_WORKERS} потоков)...")
+    print(f"  Parallel scan ({NUM_WORKERS} threads)...")
     
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = {executor.submit(_run_silencedetect_chunk, *t): t[3] for t in tasks}
@@ -224,7 +217,7 @@ def detect_silences_parallel(filepath, total_duration):
             bar = "█" * filled + "░" * (30 - filled)
             print(f"\r  [{bar}] {pct:5.1f}% | {completed}/{NUM_WORKERS} | ETA: {fmt(eta)}   ", end="", flush=True)
     
-    print(f"\r  [{'█' * 30}] 100.0% | Готово за {fmt(time.time() - t0)}                    ")
+    print(f"\r  [{'█' * 30}] 100.0% | Ready in {fmt(time.time() - t0)}                    ")
     
     all_silences.sort(key=lambda x: x[0])
     merged = []
@@ -238,12 +231,11 @@ def detect_silences_parallel(filepath, total_duration):
 
 
 def _find_manual_cuts_files(filepath):
-    """Ищет JSON-файлы с ручными вырезами: сначала точное совпадение, потом нечёткое."""
+    """Finds JSON files with manual cuts: exact match first, then fuzzy."""
     found = []
     parent = filepath.parent
     stem = filepath.stem
     
-    # 1. Точное совпадение по glob
     exact_pattern = f"{stem}_manual_cuts*.json"
     for p in parent.glob(exact_pattern):
         found.append(p)
@@ -251,23 +243,21 @@ def _find_manual_cuts_files(filepath):
     if found:
         return found
     
-    # 2. Нечёткое — нормализуем имя и ищем среди всех *_manual_cuts*.json
     norm_stem = _normalize_name(stem)
-    print(f"  🔎 Точное совпадение не найдено, пробуем нечёткий поиск (нормализованное: '{norm_stem[:50]}...')")
+    print(f"  🔎 Exact match not found, trying fuzzy match (normalized: '{norm_stem[:50]}...')")
     
     for p in parent.glob("*_manual_cuts*.json"):
-        # Извлекаем stem до "_manual_cuts"
         json_base = p.name.split("_manual_cuts")[0]
         norm_json = _normalize_name(json_base)
         if norm_json == norm_stem:
             found.append(p)
-            print(f"  ✅ Нечёткое совпадение: {p.name}")
+            print(f"  ✅ Fuzzy match: {p.name}")
     
     return found
 
 
 def load_manual_cuts(filepath):
-    """Ищет и загружает все json-файлы с ручными вырезами для данного трека."""
+    """Finds and loads all json files with manual cuts for the given track."""
     cuts = []
     
     manual_files = _find_manual_cuts_files(filepath)
@@ -285,20 +275,19 @@ def load_manual_cuts(filepath):
                     en = float(c["end"])
                     cuts.append((st, en, en - st))
                     count += 1
-                print(f"  📥 Загружено ручных вырезов: {count} из файла {manual_path.name}")
+                print(f"  📥 Loaded manual cuts: {count} from {manual_path.name}")
         except Exception as e:
-            print(f"  ⚠ Ошибка чтения ручных вырезов {manual_path.name}: {e}")
+            print(f"  ⚠ Error reading manual cuts from {manual_path.name}: {e}")
             
     return cuts
 
 
 def get_combined_silences(filepath, dur, original_file):
-    """Получает автоматические вырезы и сливает их с ручными из JSON."""
+    """Gets auto-cuts and merges them with manual JSON cuts."""
     silences = detect_silences_parallel(filepath, dur)
     manual = load_manual_cuts(original_file if original_file else filepath)
     if manual:
         silences.extend(manual)
-        # Сортируем и заново мерджим накладывающиеся куски
         silences.sort(key=lambda x: x[0])
         merged = []
         for s in silences:
@@ -311,7 +300,7 @@ def get_combined_silences(filepath, dur, original_file):
 
 
 def _get_rms_at(filepath, position, duration=0.5):
-    """Замер средней громкости (RMS) в точке файла."""
+    """Measures average loudness (RMS) at a specific point."""
     cmd = [
         FFMPEG, "-hide_banner", "-nostats",
         "-ss", str(max(0, position)), "-t", str(duration),
@@ -325,23 +314,18 @@ def _get_rms_at(filepath, position, duration=0.5):
             m = re.search(r'([\-\d.]+)\s*dB', line)
             if m:
                 return float(m.group(1))
-    return -100.0  # Если не удалось замерить — считаем тишиной
+    return -100.0  
 
 
 def expand_silence_zones(filepath, silences, total_duration):
-    """
-    Расширяем каждую зону тишины, захватывая тихие хвосты/вступления песен.
-    Хвост: тихий звук перед тишиной (конец песни затихает).
-    Вступление: тихий звук после тишины (начало новой песни нарастает).
-    """
+    """Expands silence zones by capturing quiet track tails/intros."""
     if not silences:
         return []
     
     expanded = []
-    print(f"  Расширение зон тишины (захват тихих хвостов < {QUIET_THRESH} дБ)...")
+    print(f"  Expanding silence zones (capturing quiet tails < {QUIET_THRESH} dB)...")
     
     for sil_start, sil_end, sil_dur in silences:
-        # Расширяем влево (захватываем тихий хвост песни)
         new_start = sil_start
         while new_start > QUIET_SCAN_STEP:
             rms = _get_rms_at(filepath, new_start - QUIET_SCAN_STEP, QUIET_SCAN_STEP)
@@ -350,7 +334,6 @@ def expand_silence_zones(filepath, silences, total_duration):
             else:
                 break
         
-        # Расширяем вправо (захватываем тихое вступление следующей песни)
         new_end = sil_end
         while new_end < total_duration - QUIET_SCAN_STEP:
             rms = _get_rms_at(filepath, new_end, QUIET_SCAN_STEP)
@@ -361,11 +344,10 @@ def expand_silence_zones(filepath, silences, total_duration):
         
         added = (new_start - sil_start) + (new_end - sil_end)
         if abs(added) > 0.1:
-            print(f"    {fmt(sil_start)} | Тишина {sil_dur:.1f}с → расширено до {new_end - new_start:.1f}с (хвосты: {abs(added):.1f}с)")
+            print(f"    {fmt(sil_start)} | Silence {sil_dur:.1f}s → expanded to {new_end - new_start:.1f}s (tails: {abs(added):.1f}s)")
         
         expanded.append((new_start, new_end, new_end - new_start))
     
-    # Мерджим перекрывающиеся зоны
     merged = []
     for z in sorted(expanded, key=lambda x: x[0]):
         if merged and z[0] <= merged[-1][1]:
@@ -378,7 +360,7 @@ def expand_silence_zones(filepath, silences, total_duration):
 
 
 def _measure_volume_chunk(args):
-    """Измерение громкости одного сегмента (параллельно)."""
+    """Measures loudness of a single segment (parallel)."""
     idx, filepath, start, duration = args
     cmd = [
         FFMPEG, "-hide_banner", "-nostats",
@@ -400,7 +382,7 @@ def _measure_volume_chunk(args):
 
 
 def analyze_volume_segments(filepath, total_duration, num_segments=12):
-    """Разбивает трек на N частей и замеряет громкость каждой параллельно."""
+    """Splits track into N parts and measures loudness of each in parallel."""
     seg_len = total_duration / num_segments
     tasks = [(i, str(filepath), i * seg_len, seg_len) for i in range(num_segments)]
     
@@ -408,7 +390,7 @@ def analyze_volume_segments(filepath, total_duration, num_segments=12):
     completed = 0
     t0 = time.time()
     
-    print(f"  Параллельный замер громкости ({NUM_WORKERS} потоков, {num_segments} сегментов)...")
+    print(f"  Parallel volume map ({NUM_WORKERS} threads, {num_segments} segments)...")
     
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         futures = {executor.submit(_measure_volume_chunk, t): t[0] for t in tasks}
@@ -423,22 +405,22 @@ def analyze_volume_segments(filepath, total_duration, num_segments=12):
             bar = "█" * filled + "░" * (30 - filled)
             print(f"\r  [{bar}] {pct:5.1f}% | {completed}/{num_segments} | ETA: {fmt(eta)}   ", end="", flush=True)
     
-    print(f"\r  [{'█' * 30}] 100.0% | Готово за {fmt(time.time() - t0)}                    ")
+    print(f"\r  [{'█' * 30}] 100.0% | Ready in {fmt(time.time() - t0)}                    ")
     return results
 
 
 def check_ffmpeg():
     if not shutil.which(FFMPEG) or not shutil.which(FFPROBE):
-        print(f"Ошибка: {FFMPEG} или {FFPROBE} не найдены.")
-        print("Установите FFmpeg или положите ffmpeg.exe/ffprobe.exe в папку со скриптом.")
+        print(f"Error: {FFMPEG} or {FFPROBE} not found.")
+        print("Install FFmpeg or place ffmpeg.exe/ffprobe.exe in the script folder.")
         sys.exit(1)
 
 
 def backup_source_files(input_file):
-    """Создает резервную копию оригинального трека и всех JSON с вырезами."""
+    """Creates a backup copy of the original track and all JSON cut files."""
     manual_files = _find_manual_cuts_files(input_file)
     if not manual_files:
-        return  # Не делаем бэкап, если нет ни одного JSON-файла разметки
+        return  
 
     backup_base = input_file.parent.parent / "sources"
     backup_dir = backup_base / input_file.stem
@@ -446,23 +428,21 @@ def backup_source_files(input_file):
     
     copied_something = False
     
-    # Бэкап оригинального аудио
     dest_audio = backup_dir / input_file.name
     if not dest_audio.exists() or dest_audio.stat().st_size != input_file.stat().st_size:
-        print(f"  💾 Бэкап оригинала: {input_file.name} -> sources/{input_file.stem}/")
+        print(f"  💾 Backing up original: {input_file.name} -> sources/{input_file.stem}/")
         shutil.copy2(input_file, dest_audio)
         copied_something = True
         
-    # Бэкап JSON файлов с маркёрами (нечёткий поиск)
     for manual_path in manual_files:
         dest_json = backup_dir / manual_path.name
         if not dest_json.exists() or dest_json.stat().st_mtime < manual_path.stat().st_mtime:
-            print(f"  💾 Бэкап разметки: {manual_path.name}")
+            print(f"  💾 Backing up markers: {manual_path.name}")
             shutil.copy2(manual_path, dest_json)
             copied_something = True
             
     if copied_something:
-        print("  ✅ Бэкап актуализирован.\n")
+        print("  ✅ Backup is up to date.\n")
 
 
 # ============================================
@@ -470,20 +450,18 @@ def backup_source_files(input_file):
 # ============================================
 def analyze_track(filepath, original_file=None):
     print("\n" + "=" * 55)
-    print("   🎵 АНАЛИЗ ТРЕКА")
+    print("   🎵 TRACK ANALYSIS")
     print("=" * 55)
     
     meta = get_duration(filepath)
     dur = meta["duration"]
-    total_sil = 0 # Инициализируем на случай отсутствия пауз
     
-    print(f"  Файл:        {filepath.name}")
-    print(f"  Длительность: {fmt(dur)}")
-    print(f"  Битрейт:     {meta['bitrate']} kbps | Каналы: {meta['channels']} | SR: {meta['sample_rate']} Hz")
+    print(f"  File:        {filepath.name}")
+    print(f"  Duration: {fmt(dur)}")
+    print(f"  Bitrate:     {meta['bitrate']} kbps | Channels: {meta['channels']} | SR: {meta['sample_rate']} Hz")
     
-    # === 1. Карта громкости по сегментам ===
     print(f"\n{'─' * 55}")
-    print(f"  📊 КАРТА ГРОМКОСТИ (по сегментам)")
+    print(f"  📊 VOLUME MAP (Segments)")
     print(f"{'─' * 55}")
     
     vol_results = analyze_volume_segments(filepath, dur)
@@ -494,14 +472,13 @@ def analyze_track(filepath, original_file=None):
     max_vol_val = max(volumes) if volumes else 0
     vol_range = max_vol_val - min_vol
     
-    print(f"\n  {'Время':>10} │ {'Громкость':>10} │ Уровень")
+    print(f"\n  {'Time':>10} │ {'Volume':>10} │ Level Map")
     print(f"  {'─' * 10}─┼─{'─' * 10}─┼─{'─' * 28}")
     
     for r in vol_results:
         if r is None or r[2] is None:
             continue
         start, duration, mean_v, max_v = r
-        # Визуальный бар (нормализуем от min_vol до max_vol_val)
         if vol_range > 0:
             level = (mean_v - min_vol) / vol_range
         else:
@@ -509,50 +486,47 @@ def analyze_track(filepath, original_file=None):
         bar_len = int(level * 20)
         bar = "▓" * bar_len + "░" * (20 - bar_len)
         
-        # Помечаем тихие сегменты
-        marker = " ⚠ ТИХО" if mean_v < avg_vol - 3 else ""
+        marker = " ⚠ QUIET" if mean_v < avg_vol - 3 else ""
         print(f"  {fmt(start):>10} │ {mean_v:>8.1f} dB │ {bar}{marker}")
     
-    print(f"\n  Средняя: {avg_vol:.1f} dB | Разброс: {vol_range:.1f} dB | Мин: {min_vol:.1f} dB | Макс: {max_vol_val:.1f} dB")
+    print(f"\n  Mean: {avg_vol:.1f} dB | Range: {vol_range:.1f} dB | Min: {min_vol:.1f} dB | Max: {max_vol_val:.1f} dB")
     
     if vol_range > 5:
-        print(f"  ⚠ Разброс громкости {vol_range:.1f} dB — наушники БУДУТ отключаться в тихих местах!")
-        print(f"  ➡ Нормализация выровняет до {TARGET_LOUDNESS} LUFS (стандарт Spotify/YouTube).")
+        print(f"  ⚠ Dynamic range {vol_range:.1f} dB — headphones WILL disconnect in quiet parts!")
+        print(f"  ➡ Normalization will align audio to {TARGET_LOUDNESS} LUFS.")
     else:
-        print(f"  ✅ Разброс громкости {vol_range:.1f} dB — приемлемо.")
+        print(f"  ✅ Dynamic range is acceptable ({vol_range:.1f} dB).")
     
-    # === 2. Поиск пауз ===
     print(f"\n{'─' * 55}")
-    print(f"  🔇 ПОИСК ПАУЗ (порог {SILENCE_THRESH} dB, мин. {MIN_SILENCE_LEN} сек)")
+    print(f"  🔇 SCANNING FOR SILENCE ({SILENCE_THRESH} dB, min {MIN_SILENCE_LEN} sec)")
     print(f"{'─' * 55}")
     
     silences = get_combined_silences(filepath, dur, original_file)
     
     if silences:
         total_sil = sum(s[2] for s in silences)
-        print(f"\n  Найдено пауз: {len(silences)}")
-        print(f"  Общая тишина: {fmt(total_sil)} ({total_sil:.1f} сек)")
+        print(f"\n  Silences found: {len(silences)}")
+        print(f"  Total silence: {fmt(total_sil)} ({total_sil:.1f} sec)")
         
-        print(f"\n  Топ-5 самых длинных:")
+        print(f"\n  Top-5 longest parts:")
         for i, (st, en, d) in enumerate(sorted(silences, key=lambda x: x[2], reverse=True)[:5]):
-            print(f"    {i+1}. {fmt(st)} -> {fmt(en)} ({d:.1f} сек)")
+            print(f"    {i+1}. {fmt(st)} -> {fmt(en)} ({d:.1f} sec)")
     else:
-        print(f"\n  Паузы не найдены при пороге {SILENCE_THRESH} dB.")
+        print(f"\n  No silences found below {SILENCE_THRESH} dB.")
     
-    # === Итог ===
     print("=======================================================")
-    print("  ЧТО БУДЕТ СДЕЛАНО ПРИ ОБРАБОТКЕ:")
+    print("  PROCESSING PLAN:")
     
     if NORMALIZE_AUDIO:
-        print(f"    1. Нормализация громкости → {TARGET_LOUDNESS} LUFS (выравнивание)")
+        print(f"    1. Loudness normalisation → {TARGET_LOUDNESS} LUFS")
     else:
-        print(f"    1. Громкость → ОСТАЁТСЯ ОРИГИНАЛЬНОЙ (нормализация выключена)")
+        print(f"    1. Loudness → LEAVE ORIGINAL (normalization OFF)")
         
-    print(f"    2. Вырезание {len(silences)} пауз ({fmt(total_sil)} тишины)")
-    print(f"    3. Плавные переходы (настоящий кроссфейд) {FADE_SEC} сек")
+    print(f"    2. Cutting {len(silences)} silences ({fmt(total_sil)} total)")
+    print(f"    3. Smooth transitions (crossfades) {FADE_SEC} sec")
     print(f"{'=' * 55}")
     
-    print("\n  Автоматический переход к обработке через 2 секунды...")
+    print("\n  Auto-start processing in 2 seconds...")
     time.sleep(2)
     return True
 
@@ -561,13 +535,11 @@ def analyze_track(filepath, original_file=None):
 #                 PROCESS
 # ============================================
 def _process_chunk(args):
-    """Нарезка + нормализация одного чанка (отдельный процесс)."""
+    """Slicing + normalizing a single chunk (parallel)."""
     idx, input_file, start, end, output_path, target_lufs = args
     duration = end - start
     
-    # loudnorm: двухпроходная нормализация через FFmpeg
     if target_lufs is not None:
-        # Первый проход: замер параметров
         cmd1 = [
             FFMPEG, "-y", "-hide_banner", "-nostats",
             "-ss", str(start), "-t", str(duration),
@@ -577,7 +549,6 @@ def _process_chunk(args):
         ]
         r1 = safe_run(cmd1, capture_output=True, text=True, encoding="utf-8", errors="replace")
         
-        # Парсим параметры из JSON в stderr
         json_match = re.search(r'\{[^}]+\}', r1.stderr, re.DOTALL)
         
         if json_match:
@@ -589,7 +560,6 @@ def _process_chunk(args):
                 measured_thresh = params.get("input_thresh", "-34.0")
                 target_offset = params.get("target_offset", "0.0")
                 
-                # Второй проход: применяем с точными параметрами
                 af = (f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:"
                       f"measured_I={measured_I}:measured_TP={measured_TP}:"
                       f"measured_LRA={measured_LRA}:measured_thresh={measured_thresh}:"
@@ -599,13 +569,8 @@ def _process_chunk(args):
         else:
             af = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
     else:
-        af = "" # Пустой фильтр
+        af = ""
     
-    # Микро-фейды (30мс) на краях каждого чанка для устранения щелчков/пуков
-    # 30мс — неслышно, но гарантирует плавный старт/стоп на нулевом уровне
-    # См. выше: мы больше не добавляем микро-фейды по 30мс на каждый чанк, 
-    # т.к. теперь у нас есть полноценный acrossfade на 1 секунду.
-    # Если оставить оба, они могут конфликтовать и создавать щелчки.
     af_chain = af
     
     cmd2 = [
@@ -626,25 +591,22 @@ def _process_chunk(args):
 
 
 def process_mix(filepath, output_filename, original_file=None):
-    proc_t0 = time.time()  # Фиксируем время старта для статистики
+    proc_t0 = time.time()
     print("\n" + "=" * 55)
-    print("   🔧 ОБРАБОТКА МИКСА")
+    print("   🔧 PROCESSING MIX")
     print("=" * 55)
     
     meta = get_duration(filepath)
     dur = meta["duration"]
-    print(f"  Файл: {filepath.name} ({fmt(dur)})")
+    print(f"  File: {filepath.name} ({fmt(dur)})")
     
-    # 1. Поиск абсолютной тишины
-    print(f"\n📍 Шаг 1: Поиск тишины ({SILENCE_THRESH} дБ) и ручные вырезы...")
+    print(f"\n📍 Step 1: Detect silence ({SILENCE_THRESH} dB) and manual cuts...")
     raw_silences = get_combined_silences(filepath, dur, original_file)
-    print(f"  Найдено абсолютных пауз (с учетом ручных): {len(raw_silences)}")
+    print(f"  Absolute silences found (including manual): {len(raw_silences)}")
     
-    # 2. Расширение зон тишины (захват тихих хвостов)
-    print(f"\n📍 Шаг 2: Расширение зон (захват тихих хвостов < {QUIET_THRESH} дБ)...")
+    print(f"\n📍 Step 2: Expand zones (capturing quiet tails < {QUIET_THRESH} dB)...")
     silences = expand_silence_zones(filepath, raw_silences, dur)
     
-    # 3. Сегменты (только те, что длиннее 0.1с)
     segments = []
     prev_end = 0.0
     for start, end, d in silences:
@@ -658,10 +620,8 @@ def process_mix(filepath, output_filename, original_file=None):
         segments = [(0.0, dur)]
     
     total_sil = sum(s[2] for s in silences) if silences else 0
-    print(f"\n  📊 Сегментов: {len(segments)} | Вырежем: {fmt(total_sil)} (тишина + тихие хвосты)")
+    print(f"\n  📊 Segments: {len(segments)} | Total cut: {fmt(total_sil)} (silence + quiet tails)")
     
-    # === Сохраняем дебаг-лог ===
-    # Карта времени: обработанный файл → оригинал
     time_map = []
     output_pos = 0.0
     for i, (seg_start, seg_end) in enumerate(segments):
@@ -672,7 +632,7 @@ def process_mix(filepath, output_filename, original_file=None):
             prev_dur = segments[i-1][1] - segments[i-1][0]
             overlap_dur = min(FADE_SEC, prev_dur / 2.0, seg_dur / 2.0)
             
-        output_pos -= overlap_dur  # Вычитаем время наложения (кроссфейда)
+        output_pos -= overlap_dur
         output_pos = max(0.0, output_pos)
         
         time_map.append({
@@ -718,13 +678,12 @@ def process_mix(filepath, output_filename, original_file=None):
     debug_path = PROJECT_ROOT / "logs" / f"debug_{base_name}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(debug_log, f, ensure_ascii=False, indent=2)
-    print(f"  📝 Дебаг-лог сохранен: {debug_path.name}")
-    print(f"  📍 Карта времени (output → original): {len(time_map)} сегментов")
+    print(f"  📝 Debug log saved: {debug_path.name}")
+    print(f"  📍 Time map (output → original): {len(time_map)} segments")
 
     
-    # 3. Параллельная нарезка + нормализация
     TEMP_DIR.mkdir(exist_ok=True)
-    print(f"\n📍 Шаг 3: Нарезка + нормализация ({NUM_WORKERS} потоков, 2-pass loudnorm)...")
+    print(f"\n📍 Step 3: Cutting + Normalization ({NUM_WORKERS} threads, 2-pass loudnorm)...")
     
     tasks = []
     lufs_target = TARGET_LOUDNESS if NORMALIZE_AUDIO else None
@@ -747,8 +706,7 @@ def process_mix(filepath, output_filename, original_file=None):
             bar = "█" * filled + "░" * (30 - filled)
             print(f"\r  [{bar}] {pct:5.1f}% | {completed_count}/{len(tasks)} | ETA: {fmt(eta)}   ", end="", flush=True)
     
-    # 4. Валидация фактических чанков
-    print(f"\n📍 Шаг 4: Валидация чанков...")
+    print(f"\n📍 Step 4: Validate chunks...")
     valid_chunks = []
     for i in range(len(segments)):
         wav_file = TEMP_DIR / f"chunk_{i:04d}.wav"
@@ -760,14 +718,13 @@ def process_mix(filepath, output_filename, original_file=None):
                     "dur": actual_dur
                 })
     if not valid_chunks:
-        print("Ошибка: ни один чанк не был создан!")
+        print("Error: No valid chunks created!")
         return
         
-    # 5. Бесшовная склейка (кроссфейд)
     interleaved = valid_chunks
     
-    print(f"\n📍 Шаг 5: Бесшовная склейка ({len(valid_chunks)} фрагментов)...")
-    print(f"  (Настоящий кроссфейд {FADE_SEC}с между песнями)")
+    print(f"\n📍 Step 5: Seamless splicing ({len(valid_chunks)} fragments)...")
+    print(f"  (Real crossfade {FADE_SEC}s between tracks)")
     
     t0 = time.time()
     
@@ -788,7 +745,6 @@ def process_mix(filepath, output_filename, original_file=None):
         filter_parts.append(f"[{last_out}][{i}:a]acrossfade=d={fade_dur}:c1=qsin:c2=qsin[{out_pad}]")
         last_out = out_pad
         
-    # Комбинируем фильтры чистки: adeclick (от щелчков) + adeclip (от перегрузов/артефактов)
     click_filter = (f"adeclick=w={ADECLICK_WINDOW}:o={ADECLICK_OVERLAP}:b={ADECLICK_BURST}:t={ADECLICK_THRESHOLD},"
                     f"adeclip")
     
@@ -800,24 +756,22 @@ def process_mix(filepath, output_filename, original_file=None):
         filter_graph = ";".join(filter_parts)
         cmd.extend(["-filter_complex", filter_graph, "-map", f"[{last_out}]"])
     else:
-        # Всего один сегмент
         if CLICK_REMOVAL:
             cmd.extend(["-af", click_filter])
         else:
             cmd.extend(["-map", "0:a"])
     
-    print(f"\n📍 Шаг 6: Экспорт в итоговый MP3 (финальный рендер)...")
+    print(f"\n📍 Step 6: Exporting final MP3 (rendering)...")
     if CLICK_REMOVAL:
-        print(f"  ✨ Применяется фильтр анти-кликов: threshold={ADECLICK_THRESHOLD}")
+        print(f"  ✨ Anti-click filter active: threshold={ADECLICK_THRESHOLD}")
 
     output_path = PROJECT_ROOT / output_filename
     cmd.extend(["-b:a", OUTPUT_BITRATE, str(output_path)])
     
-    # Запускаем экспорт с отображением прогресса
     process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     
     total_dur_render = sum(c["dur"] for c in interleaved) - (len(interleaved) - 1) * FADE_SEC
-    print(f"  Экспорт микса длиной {fmt(total_dur_render)}...")
+    print(f"  Exporting mix length: {fmt(total_dur_render)}...")
     
     render_start = time.time()
     while True:
@@ -838,22 +792,19 @@ def process_mix(filepath, output_filename, original_file=None):
                         eta_sec = (elapsed / pct) * (100 - pct)
                         eta_str = fmt(eta_sec)
                     
-                    print(f"\r    Обработано: {cur_time_str} | {pct:5.1f}% | Осталось: ~{eta_str}", end="", flush=True)
+                    print(f"\r    Processed: {cur_time_str} | {pct:5.1f}% | ETA: ~{eta_str}", end="", flush=True)
                 except: pass
     process.wait()
 
-    print(f"\n  ✅ Склейка и экспорт завершены за {fmt(time.time() - t0)}")
+    print(f"\n  ✅ Splicing and export finished in {fmt(time.time() - t0)}")
 
 
-    # 7. Пост-проверка стыков
-    print(f"\n📍 Шаг 7: Проверка стыков на клики...")
+    print(f"\n📍 Step 7: Checking joints for clicks...")
     TEMP_DIR.mkdir(exist_ok=True)
     scan_joints_for_clicks(output_path, time_map)
     
-    # 6. Статистика и лог
     final_meta = get_duration(output_path)
     
-    # Дополняем лог финальными данными
     debug_log["final_stats"] = {
         "output_duration": final_meta["duration"],
         "total_silence_cut": total_sil,
@@ -864,22 +815,21 @@ def process_mix(filepath, output_filename, original_file=None):
         json.dump(debug_log, f, ensure_ascii=False, indent=2)
     
     print(f"\n{'=' * 55}")
-    print(f"  Исходная:      {fmt(dur)}")
-    print(f"  Итоговая:      {fmt(final_meta['duration'])}")
-    print(f"  Вырезано:      {fmt(total_sil)} тишины")
+    print(f"  Original:      {fmt(dur)}")
+    print(f"  Result:        {fmt(final_meta['duration'])}")
+    print(f"  Cut:           {fmt(total_sil)} silence")
     
     if NORMALIZE_AUDIO:
-        print(f"  Нормализация:  {TARGET_LOUDNESS} LUFS (2-pass loudnorm)")
+        print(f"  Normalization: {TARGET_LOUDNESS} LUFS (2-pass loudnorm)")
     else:
-        print(f"  Нормализация:  ВЫКЛЮЧЕНА (оригинальная динамика)")
+        print(f"  Normalization: OFF (original dynamics)")
         
-    print(f"  Сегментов:     {len(segments)}")
-    print(f"  Файл:          {output_path}")
+    print(f"  Segments:      {len(segments)}")
+    print(f"  File:          {output_path}")
     print(f"{'=' * 55}")
-    print(f"  🎉 Готово! Сохранено: {output_path}")
-    print(f"  Общее время обработки: {fmt(time.time() - proc_t0)}")
+    print(f"  🎉 Done! Saved: {output_path}")
+    print(f"  Total processing time: {fmt(time.time() - proc_t0)}")
     
-    # Сигнал об окончании: запускаем файл в плеере системы
     try:
         if os.name == 'nt':
             os.startfile(str(output_path))
@@ -888,11 +838,10 @@ def process_mix(filepath, output_filename, original_file=None):
         elif sys.platform == 'darwin':
             subprocess.Popen(['open', str(output_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
-        print(f"  ⚠ Не удалось запустить трек: {e}")
+        print(f"  ⚠ Could not launch track: {e}")
     
-    print("\n  🎧 Наушники больше не будут отключаться!")
+    print("\n  🎧 Headphones will no longer disconnect!")
     
-    # 7. Очистка временных файлов
     shutil.rmtree(TEMP_DIR, ignore_errors=True)
 
 
@@ -904,29 +853,28 @@ if __name__ == "__main__":
     folder = Path("lofi_tracks")
     if not folder.exists():
         folder.mkdir()
-        print(f"Создана папка '{folder}'. Положите туда ваш микс (mp3).")
+        print(f"Created folder '{folder}'. Place your mix (mp3) there.")
         sys.exit(0)
     
     files = list(folder.glob("*.mp3"))
     if not files:
-        print(f"Положите MP3 файл в папку '{folder}'!")
+        print(f"Place MP3 file into '{folder}' folder!")
         sys.exit(0)
     
     input_file = files[0]
     print("\n" + "=" * 42)
-    print(f"Найден файл: {input_file.name}\n")
+    print(f"Found file: {input_file.name}\n")
     
     backup_source_files(input_file)
 
-    # 1. Переводим в FLAC для работы
     TEMP_DIR.mkdir(exist_ok=True)
     
     if input_file.suffix.lower() in [".wav", ".flac"]:
         working_file = input_file
     else:
         working_file = TEMP_DIR / "source_fixed.flac"
-        print("\n📍 Подготовка: переформатирование MP3 в Lossless-формат (FLAC)...")
-        print("  (Это гарантирует 100% распознавание повреждённого звука и таймкодов на многочасовых миксах)")
+        print("\n📍 Preparation: formatting MP3 to Lossless (FLAC)...")
+        print("  (This guarantees 100% correct timecodes on long mixes)")
         t0 = time.time()
         cmd = [
             FFMPEG, "-y", "-hide_banner", 
@@ -936,7 +884,7 @@ if __name__ == "__main__":
             str(working_file)
         ]
         safe_run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"  Готово за {fmt(time.time() - t0)}")
+        print(f"  Ready in {fmt(time.time() - t0)}")
     
     should_process = analyze_track(working_file, input_file)
     if should_process:

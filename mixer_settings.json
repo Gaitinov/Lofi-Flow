@@ -1,0 +1,28 @@
+{
+  "silence": {
+    "thresh_db": -40.0,
+    "min_len_sec": 0.5,
+    "quiet_thresh_db": -30.0,
+    "quiet_scan_step": 0.5
+  },
+  "mixing": {
+    "fade_sec": 1.2,
+    "normalize_audio": false,
+    "target_loudness_lufs": -14.0,
+    "output_bitrate": "192k"
+  },
+  "artifact_removal": {
+    "enabled": true,
+    "window_ms": 55,
+    "overlap_pct": 75,
+    "threshold": 2,
+    "burst": 2
+  },
+  "repeat_detection": {
+    "window_sec": 12,
+    "similarity_threshold": 0.92
+  },
+  "system": {
+    "num_workers": 6
+  }
+}

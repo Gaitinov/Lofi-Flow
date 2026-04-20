@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title Lo-Fi Flow: Поиск повторов
-color 0E
+title Lo-Fi Flow: Process Single Track
+color 0A
 echo ===================================================
-echo   ПОИСК ПОВТОРОВ В ФАЙЛЕ (Duplicate Finder)
+echo    [ Lo-Fi Single Track Mixer ]
 echo ===================================================
 echo.
-python scripts\find_repeats.py
+python scripts\run_mixer.py
 echo.
 pause

@@ -203,50 +203,81 @@
             font-weight: bold;
         }
         
-        .ab-flash {
-            animation: flash 0.3s ease-out;
+        /* Language Switcher */
+        .lang-switch {
+            display: flex; 
+            justify-content: flex-end;
+            gap: 8px; 
+            margin-bottom: 20px;
+            background: transparent;
         }
-        @keyframes flash {
-            0% { background: var(--accent); }
-            100% { background: var(--bg); }
+        
+        .lang-btn {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(8px);
+            color: var(--text-dim); 
+            padding: 6px 14px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 13px;
+            font-weight: 700;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .lang-btn:hover { 
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .lang-btn.active { 
+            background: var(--accent); 
+            color: #000; 
+            box-shadow: 0 0 15px var(--accent-glow);
         }
     </style>
     <script src="latest_repeats_data.js" onerror="console.log('No preloaded data found')"></script>
 </head>
 <body id="body">
     <div class="container">
-        <h1>⚡ Repeat Verifier <button id="closeBtn" class="btn btn-sm" style="display:none; font-size: 0.8rem; padding: 5px 12px; margin-left: 15px; vertical-align: middle; background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid rgba(244,63,94,0.3);" onclick="resetApp()">❌ Закрыть</button></h1>
+        <div class="lang-switch">
+            <button class="lang-btn" id="lang-en" onclick="setLanguage('en')">EN</button>
+            <button class="lang-btn" id="lang-ru" onclick="setLanguage('ru')">RU</button>
+        </div>
+        <h1>⚡ Repeat Verifier <button id="closeBtn" class="btn btn-sm" style="display:none; font-size: 0.8rem; padding: 5px 12px; margin-left: 15px; vertical-align: middle; background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid rgba(244,63,94,0.3);" onclick="resetApp()">❌ <span data-t="close">Close</span></button></h1>
 
         <div class="drop-zone" id="dropZone" onclick="document.getElementById('jsonInput').click()">
-            <div id="dropText">📂 Перетащите <b>repeats_*.json</b> или кликните</div>
+            <div id="dropText" data-t="dropText">📂 Drop <b>repeats_*.json</b> here or click</div>
             <input type="file" id="jsonInput" style="display:none" accept=".json">
         </div>
 
         <div class="audio-setup" id="audioSetup">
-            <div style="font-weight: 600;">📀 Требуется аудиофайл: <span id="fileNameHint" style="color:var(--accent)">...</span></div>
+            <div style="font-weight: 600;"><span data-t="audioReq">📀 Audio file required</span>: <span id="fileNameHint" style="color:var(--accent)">...</span></div>
             <div>
-                <button class="btn btn-accent" onclick="document.getElementById('audioInput').click()">📁 Выбрать аудиофайл</button>
+                <button class="btn btn-accent" onclick="document.getElementById('audioInput').click()" data-t="btnSelectAudio">📁 Select audio file</button>
                 <input type="file" id="audioInput" style="display:none" accept="audio/*">
             </div>
         </div>
 
         <div id="statsBar" style="display:none; background: var(--card); border-radius: var(--radius); padding: 15px 20px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05); text-align: center; justify-content: space-around; flex-wrap: wrap; gap: 15px;">
-            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Вероятность наличия повторов:<br><b id="statProb" style="color:var(--danger); font-size: 1.4rem;">...</b></div>
-            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Максимальная схожесть:<br><b id="statSim" style="color:var(--accent); font-size: 1.4rem;">...</b></div>
-            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;">Количество найденных:<br><b id="statCount" style="color:var(--text); font-size: 1.4rem;">...</b></div>
-            <div style="font-size: 1.1rem; flex: 1; min-width: 150px; border-left: 1px solid rgba(255,255,255,0.1);">Уникального материала:<br><b id="statOrig" style="color:#10b981; font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;"><span data-t="probLabel">Probability of repeats</span>:<br><b id="statProb" style="color:var(--danger); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;"><span data-t="simLabel">Maximum similarity</span>:<br><b id="statSim" style="color:var(--accent); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px;"><span data-t="countLabel">Matches found</span>:<br><b id="statCount" style="color:var(--text); font-size: 1.4rem;">...</b></div>
+            <div style="font-size: 1.1rem; flex: 1; min-width: 150px; border-left: 1px solid rgba(255,255,255,0.1);"><span data-t="uniqueLabel">Unique material</span>:<br><b id="statOrig" style="color:#10b981; font-size: 1.4rem;">...</b></div>
         </div>
         
-        <div id="copypasteBadge" style="display:none; width: 100%; margin-bottom: 20px; background: rgba(244,63,94,0.1); border: 2px solid var(--danger); padding: 15px; color: var(--danger); font-size: 1.2rem; font-weight: 800; border-radius: var(--radius); text-align: center; text-transform: uppercase; letter-spacing: 1px; box-sizing: border-box; box-shadow: 0 0 15px rgba(244,63,94,0.3);">
-            🚨 Обнаружена серийная копипаста целого блока треков!
+        <div id="copypasteBadge" style="display:none; width: 100%; margin-bottom: 20px; background: rgba(244,63,94,0.1); border: 2px solid var(--danger); padding: 15px; color: var(--danger); font-size: 1.2rem; font-weight: 800; border-radius: var(--radius); text-align: center; text-transform: uppercase; letter-spacing: 1px; box-sizing: border-box; box-shadow: 0 0 15px rgba(244,63,94,0.3);" data-t="copypasteBadge">
+            🚨 Serial copy-paste block detected! целого блока треков!
         </div>
 
         <div id="controlsContainer" style="display:none; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-dim);">Список найденных совпадений:</div>
+            <div style="font-size: 1.2rem; font-weight: bold; color: var(--text-dim);" data-t="listLabel">List of matches:</div>
             <select id="sortSelect" onchange="renderMatches()" style="background: var(--card); color: var(--text); border: 1px solid rgba(255,255,255,0.2); padding: 8px 15px; border-radius: var(--radius); outline: none; cursor: pointer; font-size: 0.95rem;">
-                <option value="time" style="background: var(--bg); color: var(--text);">⏳ В хронологическом порядке</option>
-                <option value="similarity" style="background: var(--bg); color: var(--text);">🎯 По наибольшей схожести</option>
-                <option value="duration" style="background: var(--bg); color: var(--text);">⏱ По наибольшей длительности</option>
+                <option value="time" style="background: var(--bg); color: var(--text);" data-t="sortTime">⏳ Chronological order</option>
+                <option value="similarity" style="background: var(--bg); color: var(--text);" data-t="sortSim">🎯 By similarity</option>
+                <option value="duration" style="background: var(--bg); color: var(--text);" data-t="sortDur">⏱ By duration</option>
             </select>
         </div>
 
@@ -260,17 +291,17 @@
             <div class="progress-bar" id="progressBar"></div>
         </div>
         <div class="main-controls">
-            <button class="btn" onclick="skip(-5)">⏪ -5с</button>
+            <button class="btn" onclick="skip(-5)" id="btnBack">⏪ -5<span data-t="secShort">с</span></button>
             <div class="time-display" id="timeDisplay">00:00 / 00:00</div>
-            <button class="btn" style="font-size: 1.2rem; padding: 10px 25px;" id="playBtn" onclick="togglePlay()">▶ Плей</button>
-            <button class="btn" onclick="skip(5)">+5с ⏩</button>
+            <button class="btn" style="font-size: 1.2rem; padding: 10px 25px;" id="playBtn" onclick="togglePlay()" data-t="btnPlay">▶ Play</button>
+            <button class="btn" onclick="skip(5)" id="btnForward">+5<span data-t="secShort">с</span> ⏩</button>
             
             <div style="height: 30px; width: 1px; background: #334155;"></div>
             
             <div style="position: relative;">
                 <div class="comparison-badge" id="abBadge" style="display:none">Mode A</div>
-                <button class="btn btn-accent" id="abBtn" onclick="toggleAB()" disabled title="Сравнить участки A и B">
-                    🔄 ПЕРЕКЛЮЧИТЬ (A/B)
+                <button class="btn btn-accent" id="abBtn" onclick="toggleAB()" disabled title="Сравнить участки A и B" data-t="btnAB">
+                    🔄 SWITCH (A/B)
                 </button>
             </div>
         </div>
@@ -280,6 +311,112 @@
     <audio id="audioPlayer" style="display:none"></audio>
 
     <script>
+        const I18N = {
+            en: {
+                close: 'Close',
+                dropText: '📂 Drop <b>repeats_*.json</b> or click',
+                audioReq: '📀 Audio file required',
+                btnSelectAudio: '📁 Select audio file',
+                probLabel: 'Repeat probability',
+                simLabel: 'Max similarity',
+                countLabel: 'Matches found',
+                uniqueLabel: 'Unique material',
+                copypasteBadge: '🚨 Serial copypasta of a full track block detected!',
+                listLabel: 'Matches list:',
+                sortTime: '⏳ Chronological order',
+                sortSim: '🎯 By similarity',
+                sortDur: '⏱ By duration',
+                secShort: 's',
+                btnPlay: '▶ Play',
+                btnPause: '⏸ Pause',
+                btnAB: '🔄 SWITCH (A/B)',
+                btnListenA: 'Listen A',
+                btnListenB: 'Listen B',
+                similarity: 'Similarity',
+                duration: 'Duration',
+                segmentA: 'Segment A',
+                segmentB: 'Segment B',
+                copypasteLink: '🔗 Shift',
+                btnRemove: 'Remove from list',
+                noMatches: 'No repeats found!',
+                unitH: 'h',
+                unitM: 'm',
+                unitS: 's',
+                reportLoaded: 'Report loaded',
+                fromMemory: 'from memory',
+                jsonError: 'JSON parse error',
+                confirmClose: 'Close current report and return to selection?',
+                secShortFull: 'sec'
+            },
+            ru: {
+                close: 'Close',
+                dropText: '📂 Drop <b>repeats_*.json</b> here or click',
+                audioReq: '📀 Audio file required',
+                btnSelectAudio: '📁 Select audio file',
+                probLabel: 'Probability of repeats',
+                simLabel: 'Maximum similarity',
+                countLabel: 'Matches found',
+                uniqueLabel: 'Unique material',
+                copypasteBadge: '🚨 Serial copy-paste block detected! целого блока треков!',
+                listLabel: 'List of matches:',
+                sortTime: '⏳ Chronological order',
+                sortSim: '🎯 By similarity',
+                sortDur: '⏱ By duration',
+                secShort: 'с',
+                btnPlay: '▶ Play',
+                btnPause: '⏸ Pause',
+                btnAB: '🔄 SWITCH (A/B)',
+                btnListenA: 'Listen A',
+                btnListenB: 'Listen B',
+                similarity: 'Similarity',
+                duration: 'Duration',
+                segmentA: 'Segment A',
+                segmentB: 'Segment B',
+                copypasteLink: '🔗 Shift',
+                btnRemove: 'Remove from list',
+                noMatches: 'No repeats found!',
+                unitH: 'ч',
+                unitM: 'м',
+                unitS: 'с',
+                reportLoaded: 'Report loaded',
+                fromMemory: 'из памяти',
+                jsonError: 'JSON parse error',
+                confirmClose: 'Close текущий отчет и вернуться к выбору?',
+                secShortFull: 'сек'
+            }
+        };
+
+        let currentLang = localStorage.getItem('lofi_lang') || 'en';
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('lofi_lang', lang);
+            updateUIStrings();
+            if (data) renderMatches(); // Re-render list to update dynamically generated strings
+        }
+
+        function updateUIStrings() {
+            const t = I18N[currentLang];
+            
+            document.getElementById('lang-en').classList.toggle('active', currentLang === 'en');
+            document.getElementById('lang-ru').classList.toggle('active', currentLang === 'ru');
+
+            document.querySelectorAll('[data-t]').forEach(el => {
+                const key = el.getAttribute('data-t');
+                if (t[key]) {
+                    if (key === 'dropText') el.innerHTML = t[key];
+                    else el.innerText = t[key];
+                }
+            });
+
+            // Update player buttons
+            const playBtn = document.getElementById('playBtn');
+            if (playBtn) playBtn.innerText = audio.paused ? t.btnPlay : t.btnPause;
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            updateUIStrings();
+        });
         let data = null;
         let currentMatch = null;
         let mode = 'A'; // A or B
@@ -307,20 +444,20 @@
                 const rawData = e.target.result;
                 try {
                     data = JSON.parse(rawData);
-                    // Сохраняем для авто-открытия
+                    // Save for auto-open
                     try {
                         localStorage.setItem('last_repeats_json', rawData);
                         localStorage.setItem('last_repeats_filename', file.name);
                     } catch(err) { console.warn("Не удалось сохранить в localStorage"); }
                     
                     processData(data, file.name);
-                } catch(err) { alert('Ошибка разбора JSON: ' + err.message); }
+                } catch(err) { alert(I18N[currentLang].jsonError + ': ' + err.message); }
             };
             reader.readAsText(file);
         }
 
         function resetApp() {
-            if (confirm('Закрыть текущий отчет и вернуться к выбору?')) {
+            if (confirm(I18N[currentLang].confirmClose)) {
                 localStorage.removeItem('last_repeats_json');
                 localStorage.removeItem('last_repeats_filename');
                 sessionStorage.setItem('ignore_preload', 'true');
@@ -333,7 +470,8 @@
             document.getElementById('closeBtn').style.display = 'inline-flex';
             document.getElementById('fileNameHint').innerText = data.source_file;
             document.getElementById('audioSetup').classList.add('visible');
-            document.getElementById('dropText').innerHTML = `✅ Отчет загружен: <b>${fileName || 'из памяти'}</b>`;
+            const t = I18N[currentLang];
+            document.getElementById('dropText').innerHTML = `✅ ${t.reportLoaded}: <b>${fileName || t.fromMemory}</b>`;
             document.getElementById('dropZone').style.display = 'none';
             
             if (data.probability !== undefined) {
@@ -366,7 +504,7 @@
                 document.getElementById('copypasteBadge').style.display = 'none';
             }
             
-            // Автоматическая попытка загрузить аудио
+            // Automatic audio load attempt
             if (data.source_file) {
                 const tryLoad = (src, isAbsolute = false) => {
                     return new Promise((resolve, reject) => {
@@ -429,7 +567,7 @@
             list.innerHTML = '';
             
             if (!data || !data.matches || !data.matches.length) {
-                list.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--text-dim)">Повторов не обнаружено</div>';
+                list.innerHTML = `<div style="text-align:center; padding: 40px; color: var(--text-dim)">${I18N[currentLang].noMatches}</div>`;
                 if(controls) controls.style.display = 'none';
                 return;
             }
@@ -449,19 +587,20 @@
 
             matches.forEach((m, idx) => {
                 const card = document.createElement('div');
+                const t = I18N[currentLang];
                 card.className = 'match-card';
                 card.innerHTML = `
                     <div class="match-info">
                         <div class="time-tag">${m.time_a_fmt}</div>
                         <div style="color: var(--text-dim)">⇔</div>
                         <div class="time-tag">${m.time_b_fmt}</div>
-                        <div class="duration-tag">~${Math.round(m.duration)} сек</div>
-                        ${m.similarity ? `<div style="color:#7dd3fc; background: rgba(56, 189, 248, 0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="Уровень схожести">🎯 ${(m.similarity*100).toFixed(1)}%</div>` : ''}
-                        ${m.is_copypaste_block ? `<div style="color:var(--danger); border: 1px solid var(--danger); background: rgba(244,63,94,0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="Этот отрезок скопирован вместе с соседними (составляет цельный блок)">🔗 Сдвиг ${formatLongTime(m.shift_seconds)}</div>` : ''}
+                        <div class="duration-tag">~${Math.round(m.duration)} ${t.secShortFull}</div>
+                        ${m.similarity ? `<div style="color:#7dd3fc; background: rgba(56, 189, 248, 0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="${t.similarity}">🎯 ${(m.similarity*100).toFixed(1)}%</div>` : ''}
+                        ${m.is_copypaste_block ? `<div style="color:var(--danger); border: 1px solid var(--danger); background: rgba(244,63,94,0.1); padding: 4px 8px; border-radius: 6px; font-size: 0.9rem;" title="Serial copypasta block">${t.copypasteLink} ${formatLongTime(m.shift_seconds)}</div>` : ''}
                     </div>
                     <div class="controls">
-                        <button class="btn btn-sm" onclick="jumpTo(${m.time_a}, ${idx})">Слушать А</button>
-                        <button class="btn btn-sm" onclick="jumpTo(${m.time_b}, ${idx})">Слушать Б</button>
+                        <button class="btn btn-sm" onclick="jumpTo(${m.time_a}, ${idx})">${t.btnListenA}</button>
+                        <button class="btn btn-sm" onclick="jumpTo(${m.time_b}, ${idx})">${t.btnListenB}</button>
                     </div>
                 `;
                 list.appendChild(card);
@@ -516,8 +655,8 @@
             document.getElementById('timeDisplay').innerText = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
         };
 
-        audio.onplay = () => { document.getElementById('playBtn').innerText = '⏸ Пауза'; };
-        audio.onpause = () => { document.getElementById('playBtn').innerText = '▶ Плей'; };
+        audio.onplay = () => { document.getElementById('playBtn').innerText = I18N[currentLang].btnPause; };
+        audio.onpause = () => { document.getElementById('playBtn').innerText = I18N[currentLang].btnPlay; };
 
         function formatTime(sec) {
             if (isNaN(sec)) return '00:00';
@@ -527,12 +666,13 @@
         }
 
         function formatLongTime(sec) {
-            if (isNaN(sec)) return '0с';
+            const t = I18N[currentLang];
+            if (isNaN(sec)) return `0${t.unitS}`;
             const h = Math.floor(sec / 3600);
             const m = Math.floor((sec % 3600) / 60);
             const s = Math.floor(sec % 60);
-            if (h > 0) return `${h}ч ${m}м ${s}с`;
-            return `${m}м ${s}с`;
+            if (h > 0) return `${h}${t.unitH} ${m}${t.unitM} ${s}${t.unitS}`;
+            return `${m}${t.unitM} ${s}${t.unitS}`;
         }
 
         function skip(sec) {

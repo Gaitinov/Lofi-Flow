@@ -121,127 +121,166 @@
     -webkit-appearance: none; appearance: none; width: 12px; height: 12px; background: var(--accent); 
     border-radius: 50%; cursor: pointer; border: 2px solid #fff;
   }
+  
+  /* Language Switcher */
+  .lang-switch {
+    display: flex; 
+    justify-content: flex-end;
+    gap: 8px; 
+    margin-bottom: 20px;
+    background: transparent;
+  }
+
+  .lang-btn {
+    background: rgba(26, 26, 46, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    color: var(--text-dim); 
+    padding: 6px 14px; 
+    border-radius: 8px; 
+    cursor: pointer; 
+    font-size: 13px;
+    font-weight: 700;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .lang-btn:hover { 
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .lang-btn.active { 
+    background: var(--primary); 
+    color: #fff; 
+    box-shadow: 0 0 15px rgba(67, 97, 238, 0.4);
+  }
 </style>
 </head>
 <body>
 
-<h1>🎵 LoFi-Flow Debug Viewer <button id="closeBtn" class="btn btn-outline btn-sm" style="display:none; vertical-align: middle; margin-left: 15px;" onclick="closeFile()">❌ Закрыть</button></h1>
+<div class="lang-switch">
+  <button class="lang-btn" id="lang-en" onclick="setLanguage('en')">EN</button>
+  <button class="lang-btn" id="lang-ru" onclick="setLanguage('ru')">RU</button>
+</div>
+
+<h1 id="titleText">🎵 LoFi-Flow Debug Viewer <button id="closeBtn" class="btn btn-outline btn-sm" style="display:none; vertical-align: middle; margin-left: 15px;" onclick="closeFile()">❌ <span data-t="close">Close</span></button></h1>
 
 <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-  📂 Перетащи <b>debug_cuts_*.json</b> сюда или кликни для выбора
+  <span data-t="dropText">📂 Drop <b>debug_cuts_*.json</b> here or click для выбора</span>
   <input type="file" id="fileInput" accept=".json">
 </div>
 
 <div id="content">
 
-  <h2>📋 Общая информация</h2>
+  <h2 data-t="hGeneral">📋 General Information</h2>
   <div class="info-grid" id="infoGrid"></div>
 
   <div id="folderInfo" class="info-card" style="margin: 10px 0; display:none;">
-    <div class="label">📂 Папка с исходниками (сюда сохранять JSON)</div>
+    <div class="label" data-t="folderLabel">📂 Source Folder (for JSON)</div>
     <div style="display:flex; gap:10px; align-items:center; margin-top:8px;">
         <code id="folderPathText" style="background:rgba(0,0,0,0.3); padding:6px 12px; border-radius:var(--radius); flex-grow:1; font-size:0.9em; word-break:break-all; border: 1px solid #333;"></code>
-        <button class="btn btn-success" onclick="copyFolderPath(this)">📋 Копировать путь</button>
+        <button class="btn btn-success" onclick="copyFolderPath(this)" data-t="copyPath">📋 Copy Path</button>
     </div>
   </div>
 
-  <h2>🎨 Визуальная карта</h2>
+  <h2 data-t="hVisualMap">🎨 Visual Map</h2>
   <div class="timeline" id="timeline"></div>
-  <div class="tooltip">🟢 Зелёный = музыка &nbsp; 🔴 Красный = вырезано</div>
+  <div class="tooltip" data-t="legend">🟢 Green = music &nbsp; 🔴 Red = cut</div>
 
-  <h2>✂️ Ручной монтаж (Manual Cuts)</h2>
+  <h2 data-t="hManualCuts">✂️ Manual Editing (Manual Cuts)</h2>
   <div class="info-card" style="margin-bottom:20px; border-top-color: var(--primary);">
-    <p class="tooltip" style="margin-top:0; color: #bbb;">Слушай микс, используй <b>Стрелки</b> для перемотки (±5с) и <b>Пробел</b> для Паузы. Размечай вырезы кнопками.</p>
+    <p class="tooltip" style="margin-top:0; color: #bbb;" data-t="manualHint">Listen to mix, use <b>Arrows</b> to seek (±5с) и <b>Пробел</b> для Паузы. Mark cuts with buttons.</p>
     
-    <div style="margin: 15px 0; display:flex; gap:12px; align-items:center;">
-        <button class="btn btn-primary" style="background: #6c5ce7;" onclick="playAudio('processed', 0)">🎧 Обработанный микс</button>
-        <button class="btn btn-primary" onclick="playAudio('original', 0)">📀 Оригинал</button>
+    <div style="margin: 15px 0; display:flex; gap:12px; align-items:center; flex-wrap: wrap;">
+        <button class="btn btn-primary" style="background: #6c5ce7;" onclick="playAudio('processed', 0)" data-t="btnProcessed">🎧 Processed Mix</button>
+        <button class="btn btn-primary" onclick="playAudio('original', 0)" data-t="btnOriginal">📀 Original</button>
+    </div>
+
+    <div id="playbackError" style="display:none; background: rgba(233, 69, 96, 0.1); border: 1px solid var(--accent); padding: 12px 18px; border-radius: var(--radius); color: var(--accent); font-size: 0.9em; margin: 10px 0;">
+      ⚠️ <span id="errorMsg" data-t="fileNotFound">File not found</span>
+      <button class="btn btn-accent btn-sm" style="margin-left: 15px;" onclick="document.getElementById('manualPlaybackInput').click()" data-t="btnSelectManual">📁 Select manually</button>
+      <input type="file" id="manualPlaybackInput" style="display:none;" accept="audio/*" onchange="handleManualPlaybackFile(event)">
     </div>
 
     <div style="margin: 20px 0; display:flex; gap:12px; align-items:center; flex-wrap: wrap;">
         <button class="btn btn-outline" style="min-width: 160px;" onclick="setManualTime('start')">
-          <span style="color: var(--accent);">[</span> Старт: <span id="manStart" style="color:#fff; margin-left:5px;">0.0</span>с
+          <span style="color: var(--accent);">[</span> <span data-t="start">Start</span>: <span id="manStart" style="color:#fff; margin-left:5px;">0.0</span><span data-t="sec">с</span>
         </button>
         <button class="btn btn-outline" style="min-width: 160px;" onclick="setManualTime('end')">
-          <span style="color: var(--accent);">]</span> Конец: <span id="manEnd" style="color:#fff; margin-left:5px;">0.0</span>с
+          <span style="color: var(--accent);">]</span> <span data-t="end">End</span>: <span id="manEnd" style="color:#fff; margin-left:5px;">0.0</span><span data-t="sec">с</span>
         </button>
-        <button class="btn btn-success" onclick="addManualCut()">➕ Добавить вырез</button>
+        <button class="btn btn-success" onclick="addManualCut()" data-t="btnAddCut">➕ Add Cut</button>
     </div>
     
     <table style="max-width:800px;">
-      <thead><tr><th>Источник</th><th>Вырез тут</th><th>В Оригинале</th><th>Удалить</th></tr></thead>
+      <thead><tr id="manualCutsHeader"><th>Source</th><th>Cut Here</th><th>В Originalе</th><th>Delete</th></tr></thead>
       <tbody id="manualCutsBody">
-         <tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding: 30px;">Нет ручных вырезов</td></tr>
+         <tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding: 30px;" data-t="noManualCuts">No manual cuts</td></tr>
       </tbody>
     </table>
-    <div style="margin-top: 20px; display:flex; gap:120px; justify-content: space-between; align-items: center;">
-      <div style="display:flex; gap:12px;">
-        <button class="btn btn-warning" onclick="exportManualCuts()">💾 Скачать ручные вырезы (.json)</button>
-        <button class="btn btn-outline btn-sm" onclick="clearSavedCuts()">🗑 Очистить память</button>
-      </div>
-      <div id="playbackError" style="display:none; background: rgba(233, 69, 96, 0.1); border: 1px solid var(--accent); padding: 10px 15px; border-radius: var(--radius); color: var(--accent); font-size: 0.9em; flex-grow: 1; margin-left: 20px;">
-        ⚠️ <span id="errorMsg">Файл не найден</span>
-        <button class="btn btn-accent btn-sm" style="margin-left: 15px;" onclick="document.getElementById('manualPlaybackInput').click()">📁 Выбрать вручную</button>
-        <input type="file" id="manualPlaybackInput" style="display:none;" accept="audio/*" onchange="handleManualPlaybackFile(event)">
-      </div>
+    <div style="margin-top: 20px; display:flex; gap:12px;">
+      <button class="btn btn-warning" onclick="exportManualCuts()" data-t="btnExportCuts">💾 Download manual cuts (.json)</button>
+      <button class="btn btn-outline btn-sm" onclick="clearSavedCuts()" data-t="btnClearMemory">🗑 Clear Memory</button>
     </div>
   </div>
 
-  <h2>💥 Поиск артефактов (Кликов)</h2>
+  <h2 data-t="hArtifacts">💥 Artifact Detection</h2>
   <div class="info-card" style="margin-bottom:20px; border-top-color: var(--warning);">
-    <p class="tooltip" style="margin-top:0; color: #bbb;">Ищет резкие скачки амплитуды на стыках сегментов (возможные щелчки).</p>
+    <p class="tooltip" style="margin-top:0; color: #bbb;" data-t="artifactHint">Detects sharp amplitude jumps на стыках сегментов (возможные щелчки).</p>
     <div style="margin: 15px 0; display:flex; align-items:center;">
-        <button class="btn btn-warning" id="btnScanClicks" onclick="scanForClicks()">🔍 Проверить на клики (Web Audio API)</button>
+        <button class="btn btn-warning" id="btnScanClicks" onclick="scanForClicks()" data-t="btnScanClicks">🔍 Scan for clicks (Web Audio API)</button>
         <input type="file" id="manualAudioInput" accept="audio/*" style="display:none;" onchange="handleManualAudioUploadForClicks(event, debugData)">
-        <span id="scanStatus" style="margin-left: 15px; color: var(--text-dim); font-size: 0.9em;">Готово к сканированию</span>
+        <span id="scanStatus" style="margin-left: 15px; color: var(--text-dim); font-size: 0.9em;" data-t="scanReady">Ready to scan</span>
     </div>
     <table style="max-width:800px; display:none;" id="clicksTableWrapper">
-      <thead><tr><th>#</th><th>В миксе</th><th>В оригинале</th><th>Сила скачка</th><th>Действие</th></tr></thead>
+      <thead><tr id="clicksHeader"><th>#</th><th>In Mix</th><th>В оригинале</th><th>Сила скачка</th><th>Действие</th></tr></thead>
       <tbody id="clicksBody"></tbody>
     </table>
   </div>
 
-  <h2>🗺 Карта времени (Output → Original)</h2>
-  <p class="tooltip">Слышишь пук на NN:NN? Найди тут — узнаешь тайминг в оригинале.</p>
+  <h2 data-t="hTimeMap">🗺 Time Map (Output → Original)</h2>
+  <p class="tooltip" data-t="artifactTooltip">Hear artifacts at NN:NN? Найдите их здесь — узнаете тайминг в оригинале.</p>
   <div class="search-box">
-    <input type="text" id="searchTime" placeholder="Поиск по времени (напр. 00:20)" oninput="filterTimeMap()">
+    <input type="text" id="searchTime" placeholder="Time search (e.g. 00:20)" oninput="filterTimeMap()" data-t="searchPlaceholder">
   </div>
   <table>
-    <thead><tr>
+    <thead><tr id="timeMapHeader">
       <th>#</th>
-      <th>🎧 В обработке</th>
+      <th>🎧 In Processed</th>
       <th>📀 В оригинале</th>
-      <th>Длина</th>
+      <th data-t="thLength">Length</th>
     </tr></thead>
     <tbody id="timeMapBody"></tbody>
   </table>
 
-  <h2>✂️ Вырезанные зоны</h2>
+  <h2 data-t="hCuts">✂️ Cut Zones</h2>
   <table>
-    <thead><tr>
+    <thead><tr id="cutsHeader">
       <th>#</th>
-      <th>Начало</th>
-      <th>Конец</th>
-      <th>Тишина</th>
-      <th>+ Хвосты</th>
-      <th>Итого вырезано</th>
+      <th data-t="thStart">Начало</th>
+      <th data-t="thEnd">End</th>
+      <th data-t="thSilence">Silence</th>
+      <th data-t="thTails">+ Tails</th>
+      <th data-t="thTotalCut">Total Cut</th>
     </tr></thead>
     <tbody id="cutsBody"></tbody>
   </table>
 
-  <h2>⚙️ Настройки</h2>
+  <h2 data-t="hSettings">⚙️ Settings</h2>
   <div class="info-grid" id="settingsGrid"></div>
 
   <div class="player-bar" id="playerBar">
     <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-        <div id="nowPlaying">🎵 Выбери тайминг...</div>
+        <div id="nowPlaying" data-t="selectTiming">🎵 Select timing...</div>
         <div style="display:flex; gap:25px; align-items:center;">
             <div class="volume-container">
                 <button class="btn btn-outline btn-sm" style="padding:4px; border:none; min-width:30px;" onclick="toggleMute()" id="muteBtn">🔊</button>
                 <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.01" value="1" oninput="changeVolume(this.value)">
             </div>
             <div style="display:flex; gap:12px; align-items:center;">
-                <label style="font-size:0.75em; color:var(--text-dim); font-weight: 600; text-transform: uppercase;">Скорость:</label>
+                <label style="font-size:0.75em; color:var(--text-dim); font-weight: 600; text-transform: uppercase;" data-t="speed">Speed:</label>
                 <select class="speed-select" onchange="changeSpeed(this.value)">
                     <option value="1">1.0x</option>
                     <option value="1.25">1.25x</option>
@@ -257,7 +296,7 @@
     </div>
 
     <div class="player-controls">
-        <button class="btn btn-accent" style="min-width:110px;" onclick="togglePlay()" id="playIcon">▶ Плей</button>
+        <button class="btn btn-accent" style="min-width:110px;" onclick="togglePlay()" id="playIcon" data-t="btnPlay">▶ Play</button>
         <button class="btn btn-outline btn-sm" onclick="skipAudio(-5)">⏪ -5s</button>
         <div class="time-display" id="timeDisplay">00:00 / 00:00</div>
         <button class="btn btn-outline btn-sm" onclick="skipAudio(5)">+5s ⏩</button>
@@ -267,16 +306,254 @@
 </div>
 
 <script>
+const I18N = {
+  en: {
+    titleText: '🎵 LoFi-Flow Debug Viewer',
+    close: 'Close',
+    dropText: '📂 Drop <b>debug_cuts_*.json</b> here or click to select',
+    hGeneral: '📋 General Information',
+    folderLabel: '📂 Source Folder (save JSON here)',
+    copyPath: '📋 Copy Path',
+    hVisualMap: '🎨 Visual Map',
+    legend: '🟢 Green = music &nbsp; 🔴 Red = cut',
+    hManualCuts: '✂️ Manual Cuts',
+    manualHint: 'Listen to the mix, use <b>Arrows</b> to seek (±5s) and <b>Space</b> to Pause. Mark cuts with buttons.',
+    btnProcessed: '🎧 Processed Mix',
+    btnOriginal: '📀 Original',
+    labelProcessed: '🎧 Processed',
+    labelOriginal: '📀 Original',
+    start: 'Start',
+    end: 'End',
+    sec: 's',
+    btnAddCut: '➕ Add Cut',
+    manualCutsHeader: ['Source', 'Cut Here', 'In Original', 'Delete'],
+    noManualCuts: 'No manual cuts',
+    btnExportCuts: '💾 Download Manual Cuts (.json)',
+    btnClearMemory: '🗑 Clear Memory',
+    fileNotFound: 'File not found',
+    btnSelectManual: '📁 Select Manually',
+    hArtifacts: '💥 Artifact Search (Clicks)',
+    artifactHint: 'Searches for sharp amplitude jumps at segment joints (possible clicks).',
+    btnScanClicks: '🔍 Check for Clicks (Web Audio API)',
+    scanReady: 'Ready to scan',
+    clicksHeader: ['#', 'In Mix', 'In Original', 'Jump Strength', 'Action'],
+    hTimeMap: '🗺 Time Map (Output → Original)',
+    artifactTooltip: 'Hear artifacts at NN:NN? Find them here — learn the timing in original.',
+    searchPlaceholder: 'Search by time (e.g. 00:20)',
+    thLength: 'Length',
+    hCuts: '✂️ Cut Zones',
+    thStart: 'Start',
+    thEnd: 'End',
+    thSilence: 'Silence',
+    thTails: '+ Tails',
+    thTotalCut: 'Total Cut',
+    hSettings: '⚙️ Settings',
+    selectTiming: '🎵 Select timing...',
+    speed: 'Speed:',
+    btnPlay: '▶ Play',
+    btnPause: '⏸ Pause',
+    nowPlaying: 'Playing:',
+    statFile: 'File',
+    statOriginal: 'Original',
+    statTotal: 'Total',
+    statCut: 'Cut',
+    statSegments: 'Segments',
+    statDate: 'Date',
+    unitH: 'h',
+    unitM: 'm',
+    unitS: 's',
+    tooltipListen: 'Listen in original file',
+    tooltipListenProc: 'Listen in processed file',
+    btnGoTo: '▶ At 2s before click',
+    jsonError: 'JSON read error',
+    confirmClose: 'Close current file and return to selection?',
+    originalNotFound: 'Original not found (or this is a megamix without binding).',
+    processedNotFound: 'Processed file not found.',
+    fileNotFoundErr: 'File not found or blocked',
+    errorLoading: 'Loading error',
+    loadingAudio: 'Loading audio file...',
+    decodingAudio: 'Decoding audio (please wait)...',
+    scanningJoints: 'Scanning joints...',
+    noArtifacts: '✅ No artifacts detected! Mix is clean.',
+    suspectAreas: '⚠️ Suspect areas found:',
+    autoLoadFailed: 'Auto-load failed.',
+    selectManually: 'Select manually',
+    needMinSegments: 'Need a log with at least two segments.',
+    processedNotInLog: 'Processed file not found in log.'
+  },
+  ru: {
+    titleText: '🎵 LoFi-Flow Debug Viewer',
+    close: 'Close',
+    dropText: '📂 Drop <b>debug_cuts_*.json</b> here or click для выбора',
+    hGeneral: '📋 General Information',
+    folderLabel: '📂 Source Folder (for JSON)',
+    copyPath: '📋 Copy Path',
+    hVisualMap: '🎨 Visual Map',
+    legend: '🟢 Green = music &nbsp; 🔴 Red = cut',
+    hManualCuts: '✂️ Manual Editing (Manual Cuts)',
+    manualHint: 'Listen to mix, use <b>Arrows</b> to seek (±5с) и <b>Пробел</b> для Паузы. Mark cuts with buttons.',
+    btnProcessed: '🎧 Processed Mix',
+    btnOriginal: '📀 Original',
+    labelProcessed: '🎧 Обработка',
+    labelOriginal: '📀 Original',
+    start: 'Start',
+    end: 'End',
+    sec: 'с',
+    btnAddCut: '➕ Add Cut',
+    manualCutsHeader: ['Source', 'Cut Here', 'В Originalе', 'Delete'],
+    noManualCuts: 'No manual cuts',
+    btnExportCuts: '💾 Download manual cuts (.json)',
+    btnClearMemory: '🗑 Clear Memory',
+    fileNotFound: 'File not found',
+    btnSelectManual: '📁 Select manually',
+    hArtifacts: '💥 Artifact Detection',
+    artifactHint: 'Detects sharp amplitude jumps на стыках сегментов (возможные щелчки).',
+    btnScanClicks: '🔍 Scan for clicks (Web Audio API)',
+    scanReady: 'Ready to scan',
+    clicksHeader: ['#', 'In Mix', 'В оригинале', 'Сила скачка', 'Действие'],
+    hTimeMap: '🗺 Time Map (Output → Original)',
+    artifactTooltip: 'Hear artifacts at NN:NN? Найдите их здесь — узнаете тайминг в оригинале.',
+    searchPlaceholder: 'Time search (e.g. 00:20)',
+    thLength: 'Length',
+    hCuts: '✂️ Cut Zones',
+    thStart: 'Начало',
+    thEnd: 'End',
+    thSilence: 'Silence',
+    thTails: '+ Tails',
+    thTotalCut: 'Total Cut',
+    hSettings: '⚙️ Settings',
+    selectTiming: '🎵 Select timing...',
+    speed: 'Speed:',
+    btnPlay: '▶ Play',
+    btnPause: '⏸ Pause',
+    nowPlaying: 'Поёт:',
+    statFile: 'Файл',
+    statOriginal: 'Original',
+    statTotal: 'Итого',
+    statCut: 'Вырезано',
+    statSegments: 'Сегментов',
+    statDate: 'Дата',
+    unitH: 'ч',
+    unitM: 'м',
+    unitS: 'с',
+    tooltipListen: 'Слушать оригинал',
+    tooltipListenProc: 'Слушать в обработанном файле',
+    btnGoTo: '▶ За 2с до клика',
+    jsonError: 'Ошибка чтения JSON',
+    confirmClose: 'Close текущий файл и вернуться к выбору?',
+    originalNotFound: 'Original не найден (или это мегамикс без привязки).',
+    processedNotFound: 'Обработанный файл не найден.',
+    fileNotFoundErr: 'File not found или заблокирован',
+    errorLoading: 'Ошибка загрузки',
+    loadingAudio: 'Загрузка аудиофайла...',
+    decodingAudio: 'Декодирование аудио (подождите)...',
+    scanningJoints: 'Сканирование стыков...',
+    noArtifacts: '✅ Артефактов не обнаружено! Микс чистый.',
+    suspectAreas: '⚠️ Найдено подозрительных мест:',
+    autoLoadFailed: 'Авто-загрузка не удалась.',
+    selectManually: 'Выберите вручную',
+    needMinSegments: 'Нужно загрузить лог с минимум двумя сегментами.',
+    processedNotInLog: 'Обработанный файл не найден в логе.'
+  }
+};
+
+let currentLang = localStorage.getItem('lofi_lang') || 'en';
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('lofi_lang', lang);
+  updateUIStrings();
+  if (debugData) render();
+}
+
+function updateUIStrings() {
+  const t = I18N[currentLang];
+  
+  // Update buttons state
+  document.getElementById('lang-en').classList.toggle('active', currentLang === 'en');
+  document.getElementById('lang-ru').classList.toggle('active', currentLang === 'ru');
+
+  // Simple key replacements
+  document.querySelectorAll('[data-t]').forEach(el => {
+    const key = el.getAttribute('data-t');
+    if (t[key]) {
+      if (typeof t[key] === 'string') {
+        // Special case for dropText which has HTML
+        if (key === 'dropText') el.innerHTML = t[key];
+        else if (key === 'manualHint') el.innerHTML = t[key];
+        else if (key === 'legend') el.innerHTML = t[key];
+        else el.innerText = t[key];
+      }
+    }
+  });
+
+  // Dedicated updates
+  const title = document.getElementById('titleText');
+  if (title) {
+    const closeBtn = document.getElementById('closeBtn');
+    title.childNodes[0].textContent = t.titleText + ' ';
+    if (closeBtn) {
+      closeBtn.querySelector('[data-t="close"]').innerText = t.close;
+    }
+  }
+
+  const searchBox = document.getElementById('searchTime');
+  if (searchBox) searchBox.placeholder = t.searchPlaceholder;
+
+  // Header updates
+  const updateHeaders = (id, keys) => {
+    const tr = document.getElementById(id);
+    if (tr) {
+      const ths = tr.querySelectorAll('th');
+      keys.forEach((k, i) => {
+        if (ths[i]) ths[i].innerText = t[k] || k;
+      });
+    }
+  };
+
+  const updateTableHeaders = (id, texts) => {
+     const tr = document.getElementById(id);
+     if (tr && texts) {
+        const ths = tr.querySelectorAll('th');
+        texts.forEach((txt, i) => {
+            if (ths[i]) ths[i].innerText = txt;
+        });
+     }
+  };
+
+  updateTableHeaders('manualCutsHeader', t.manualCutsHeader);
+  updateTableHeaders('clicksHeader', t.clicksHeader);
+  
+  // Special handling for dynamic segments like nowPlaying if empty
+  const nowPlaying = document.getElementById('nowPlaying');
+  if (nowPlaying && (!debugData || !currentAudioSrc)) {
+    nowPlaying.innerText = t.selectTiming;
+  }
+
+  const playIcon = document.getElementById('playIcon');
+  if (playIcon) {
+    playIcon.innerText = getAudio().paused ? t.btnPlay : t.btnPause;
+  }
+}
+
+// Initial update
+window.addEventListener('DOMContentLoaded', () => {
+    updateUIStrings();
+});
+
 let debugData = null;
 let allTimeMapRows = [];
 let fileId = '';
 let currentPlayType = ''; 
 let lastTrackLabel = ''; 
+let requestedTargetFile = '';
+let sessionManualFiles = {};
+
 
 function getFileId(d) {
   if (!d || !d.source_file) return '';
   const ts = (d.timestamp || '').replace(/[: ]/g, '_');
-  // ID на основе имени файла, длительности и таймстемпа лога
+  // ID based on filename and timestamp
   return `lofi_${d.source_file.split(/[/\\]/).pop()}_${Math.floor(d.source_duration)}_${ts}`;
 }
 
@@ -306,20 +583,20 @@ function loadFile(file) {
     try {
       debugData = JSON.parse(rawData);
       
-      // Сохраняем для авто-открытия в следующий раз
+      // Save for auto-open next time
       try {
         localStorage.setItem('last_debug_json', rawData);
         localStorage.setItem('last_debug_filename', file.name);
       } catch(e) { console.warn("Не удалось сохранить JSON в localStorage (возможно, слишком большой)"); }
       
       render();
-    } catch(err) { alert('Ошибка чтения JSON: ' + err.message); }
+    } catch(err) { alert(I18N[currentLang].jsonError + ': ' + err.message); }
   };
   reader.readAsText(file);
 }
 
 function closeFile() {
-  if (confirm('Закрыть текущий файл и вернуться к выбору?')) {
+  if (confirm(I18N[currentLang].confirmClose)) {
     localStorage.removeItem('last_debug_json');
     localStorage.removeItem('last_debug_filename');
     location.reload();
@@ -346,13 +623,14 @@ function render() {
   const segs = d.segments_kept?.length || d.time_map?.length || 0;
   const finalDur = (d.final_stats && d.final_stats.output_duration) ? d.final_stats.output_duration : (dur - totalCut);
   
+  const t = I18N[currentLang];
   infoGrid.innerHTML = [
-    {l:'Файл',v: d.source_file ? d.source_file.split(/[/\\]/).pop() : '?'},
-    {l:'Оригинал',v: fmtDur(dur)},
-    {l:'Итого',v: fmtDur(finalDur)},
-    {l:'Вырезано',v: fmtDur(totalCut)},
-    {l:'Сегментов',v: segs},
-    {l:'Дата',v: d.timestamp || '?'},
+    {l:t.statFile, v: d.source_file ? d.source_file.split(/[/\\]/).pop() : '?'},
+    {l:t.statOriginal, v: fmtDur(dur)},
+    {l:t.statTotal, v: fmtDur(finalDur)},
+    {l:t.statCut, v: fmtDur(totalCut)},
+    {l:t.statSegments, v: segs},
+    {l:t.statDate, v: d.timestamp || '?'},
   ].map(c => `<div class="info-card"><div class="label">${c.l}</div><div class="value">${c.v}</div></div>`).join('');
 
   // Timeline
@@ -393,16 +671,17 @@ function render() {
   const tmBody = document.getElementById('timeMapBody');
   allTimeMapRows = [];
   if(d.time_map) {
+    const t = I18N[currentLang];
     d.time_map.forEach((m,i) => {
       const sourceLabel = m.source_track ? `<br><small style="color:var(--text-dim)">${m.source_track}</small>` : '';
       const row = `<tr>
         <td>${i+1}</td>
         <td>
-          <button class="btn btn-accent btn-sm" onclick="playAudio('processed', ${m.output_start})" title="Слушать в обработанном файле">▶</button>
+          <button class="btn btn-accent btn-sm" onclick="playAudio('processed', ${m.output_start})" title="${t.tooltipListenProc}">▶</button>
           <span class="tag tag-keep">${m.output_start_fmt}</span> → <span class="tag tag-keep">${m.output_end_fmt}</span>
         </td>
         <td>
-          <button class="btn btn-primary btn-sm" onclick="playAudio('original', ${m.original_start}, '${m.source_track || ''}')" title="Слушать в оригинале">▶</button>
+          <button class="btn btn-primary btn-sm" onclick="playAudio('original', ${m.original_start}, '${m.source_track || ''}')" title="${t.tooltipListen}">▶</button>
           <span class="tag tag-expand">${m.original_start_fmt}</span> → <span class="tag tag-expand">${m.original_end_fmt}</span>
           ${sourceLabel}
         </td>
@@ -419,16 +698,16 @@ function render() {
     const rawMap = {};
     d.raw_silences.forEach(r => { rawMap[r.start_fmt] = r; });
 
+    const t = I18N[currentLang];
     cutsBody.innerHTML = d.expanded_silences.map((s,i) => {
-      const rawDur = s.dur - (d.expanded_silences[i]?.dur - s.dur); // approximate
       const tailSec = Math.max(0, s.dur - (rawMap[s.start_fmt]?.dur || s.dur));
       return `<tr>
         <td>${i+1}</td>
-        <td><button class="btn btn-primary btn-sm" onclick="playAudio('original', ${s.start})" title="Слушать оригинал">▶</button> ${s.start_fmt}</td>
+        <td><button class="btn btn-primary btn-sm" onclick="playAudio('original', ${s.start})" title="${t.tooltipListen}">▶</button> ${s.start_fmt}</td>
         <td>${s.end_fmt}</td>
-        <td>${(s.dur - tailSec).toFixed(1)}с</td>
-        <td><span class="tag tag-expand">+${tailSec.toFixed(1)}с</span></td>
-        <td><b>${s.dur.toFixed(1)}с</b></td>
+        <td>${(s.dur - tailSec).toFixed(1)}${t.unitS}</td>
+        <td><span class="tag tag-expand">+${tailSec.toFixed(1)}${t.unitS}</span></td>
+        <td><b>${s.dur.toFixed(1)}${t.unitS}</b></td>
       </tr>`;
     }).join('');
   }
@@ -448,9 +727,9 @@ function render() {
     const lastSlash = srcFile.lastIndexOf('/');
     const relFolder = lastSlash !== -1 ? srcFile.substring(0, lastSlash) : '';
     
-    // Пытаемся получить абсолютный путь, если мы открыты локально
+    // Try to get absolute path if opened locally
     let basePath = window.location.pathname.replace(/\\/g, '/');
-    if (basePath.startsWith('/')) basePath = basePath.substring(1); // для Windows: /C:/ -> C:/
+    if (basePath.startsWith('/')) basePath = basePath.substring(1); // for Windows path fix
     const lastBaseSlash = basePath.lastIndexOf('/');
     if (lastBaseSlash !== -1) {
       const parentDir = basePath.substring(0, lastBaseSlash);
@@ -459,13 +738,13 @@ function render() {
       folder = relFolder || '.';
     }
     
-    // Для Windows заменяем слэши на обратные, чтобы путь выглядел «родным» в Проводнике
+    // Fix Windows slash directions
     const winPath = decodeURI(folder).replace(/\//g, '\\');
     document.getElementById('folderInfo').style.display = 'block';
     document.getElementById('folderPathText').innerText = winPath;
   }
 
-  // Автозагрузка данных для этого файла
+  // Auto-load data for this file
   fileId = getFileId(d);
   loadSavedData();
 }
@@ -474,7 +753,7 @@ function copyFolderPath(btn) {
   const path = document.getElementById('folderPathText').innerText;
   navigator.clipboard.writeText(path).then(() => {
     const oldText = btn.innerText;
-    btn.innerText = '✅ Скопировано!';
+    btn.innerText = '✅ Copied!';
     setTimeout(() => btn.innerText = oldText, 2000);
   });
 }
@@ -492,7 +771,7 @@ function playAudio(type, timeSec, trackName) {
   const d = debugData;
   if (!d) return;
   
-  // Прячем старые ошибки
+  // Hide old errors
   document.getElementById('playbackError').style.display = 'none';
   
   currentPlayType = type;
@@ -513,43 +792,54 @@ function playAudio(type, timeSec, trackName) {
   }
   
   if (!targetFile || targetFile === 'MULTIPLE_TRACKS') {
-    alert(type === 'original' ? 'Оригинал не найден (или это мегамикс без привязки).' : 'Обработанный файл не найден.');
+    const t = I18N[currentLang];
+    alert(type === 'original' ? t.originalNotFound : t.processedNotFound);
     return;
   }
   
+  requestedTargetFile = targetFile;
   const audio = getAudio();
   const nowPlaying = document.getElementById('nowPlaying');
   
-  // Проверяем, не подсунул ли пользователь файл вручную через Blob
-  const manualFile = localStorage.getItem(`manual_file_${targetFile}`);
+  // Check for manual file selection (Blob)
+  const manualFile = sessionManualFiles[targetFile] || localStorage.getItem(`manual_file_${targetFile}`);
   const finalSrc = manualFile || encodeURI(targetFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
 
-  const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
-  
-  const setupAndPlay = () => {
-    audio.currentTime = timeSec;
-    audio.play().catch(e => {
-        console.error("Playback failed:", e);
-        if (e.name === 'NotAllowedError') {
-             nowPlaying.innerHTML = `<span style="color:var(--warning)">⚠️ Кликни "Плей" для запуска (защита браузера)</span>`;
-        }
-    });
-  };
-
-  if (currentAudioSrc !== finalSrc) {
-    audio.src = finalSrc;
-    currentAudioSrc = finalSrc;
-    nowPlaying.innerText = `Поёт: ${targetFile} (${typeLabel})`;
-    lastTrackLabel = nowPlaying.innerText;
+    const t = I18N[currentLang];
+    const typeLabel = type === 'original' ? t.labelOriginal : t.labelProcessed;
     
-    audio.onloadedmetadata = setupAndPlay;
-    audio.onerror = () => {
-        if (audio.src) {
-           document.getElementById('errorMsg').innerText = `Файл "${targetFile}" не найден или заблокирован.`;
-           document.getElementById('playbackError').style.display = 'flex';
-           nowPlaying.innerHTML = `<span style="color:var(--accent)">❌ Ошибка загрузки "${targetFile}"</span>`;
-        }
+    const setupAndPlay = () => {
+      audio.currentTime = timeSec;
+      audio.play().catch(e => {
+          console.error("Playback failed:", e);
+          if (e.name === 'NotAllowedError') {
+               nowPlaying.innerHTML = `<span style="color:var(--warning)">⚠️ ${t.btnPlay} ${t.artifactTooltip.includes('Hear') ? 'for launch (browser protection)' : 'для запуска (защита браузера)'}</span>`;
+          }
+      });
     };
+
+    if (currentAudioSrc !== finalSrc) {
+      audio.src = finalSrc;
+      currentAudioSrc = finalSrc;
+      nowPlaying.innerText = `${t.nowPlaying} ${targetFile} (${typeLabel})`;
+      lastTrackLabel = nowPlaying.innerText;
+
+    const showError = () => {
+        const t = I18N[currentLang];
+        document.getElementById('errorMsg').innerText = `${t.fileNotFoundErr}: "${targetFile}"`;
+        document.getElementById('playbackError').style.display = 'flex';
+        nowPlaying.innerHTML = `<span style="color:var(--accent)">❌ ${t.errorLoading} "${targetFile}"</span>`;
+    };
+    
+    let loaded = false;
+    audio.onloadedmetadata = () => { loaded = true; setupAndPlay(); };
+    audio.onerror = () => { if (audio.src) showError(); };
+    
+    // Fallback: on file:// protocol onerror may not fire
+    setTimeout(() => {
+        if (!loaded && audio.readyState === 0) showError();
+    }, 3000);
+
   } else {
     setupAndPlay();
   }
@@ -560,18 +850,23 @@ function handleManualPlaybackFile(event) {
     if (!file || !debugData) return;
     
     const url = URL.createObjectURL(file);
-    // Мы не можем сохранить Blob URL в localStorage надолго, 
-    // но можем использовать его в текущей сессии.
+    // Cannot save Blob URL in localStorage
+    // ...but usable in current session
     // Для более долгого хранения нужно запрашивать файл каждый раз или использовать IndexedDB.
-    // Пока просто подменяем src и играем.
+    // Swap src and play
     
     const audio = getAudio();
     audio.src = url;
-    currentAudioSrc = url; // Помечаем, что это "специальный" источник
+    currentAudioSrc = url; // Mark as special source
+
+    if (requestedTargetFile) {
+        sessionManualFiles[requestedTargetFile] = url;
+    }
     
     const type = currentPlayType;
-    const typeLabel = type === 'original' ? '📀 Оригинал' : '🎧 Обработка';
-    document.getElementById('nowPlaying').innerText = `Поёт: ${file.name} (${typeLabel})`;
+    const t = I18N[currentLang];
+    const typeLabel = type === 'original' ? t.labelOriginal : t.labelProcessed;
+    document.getElementById('nowPlaying').innerText = `${t.nowPlaying} ${file.name} (${typeLabel})`;
     lastTrackLabel = document.getElementById('nowPlaying').innerText;
     document.getElementById('playbackError').style.display = 'none';
     
@@ -642,12 +937,12 @@ window.addEventListener('load', () => {
     updateMuteIcon();
 
     audio.onplay = () => { 
-        if(playIcon) playIcon.innerText = '⏸ Пауза'; 
-        if (nowPlaying.innerHTML.includes('защита браузера') && lastTrackLabel) {
+        if(playIcon) playIcon.innerText = I18N[currentLang].btnPause; 
+        if (nowPlaying.innerText === '' && lastTrackLabel) {
             nowPlaying.innerText = lastTrackLabel;
         }
     };
-    audio.onpause = () => { if(playIcon) playIcon.innerText = '▶ Плей'; };
+    audio.onpause = () => { if(playIcon) playIcon.innerText = I18N[currentLang].btnPlay; };
 
     audio.ontimeupdate = () => {
       if (!audio.duration) return;
@@ -661,13 +956,13 @@ window.addEventListener('load', () => {
       }
       if(timeDisplay) timeDisplay.innerHTML = `${timeStr} / ${fmtDur(audio.duration)}`;
       
-      // Сохраняем позицию каждые 5 секунд (или при паузе)
+      // Save position occasionally
       const sec = Math.floor(audio.currentTime);
       if (sec % 5 === 0 && sec !== lastSavedSec) savePlaybackPos();
     };
     audio.onpause = savePlaybackPos;
 
-    // Авто-загрузка последнего JSON
+    // Auto-load last JSON session
     const lastJson = localStorage.getItem('last_debug_json');
     if (lastJson) {
       try {
@@ -727,7 +1022,7 @@ function mapToOriginalTime(t, preferLast) {
     let matches = debugData.time_map.filter(m => t >= m.output_start && t <= m.output_end);
     
     if (matches.length === 0) {
-        // Если попали в микро-дырочку кроссфейда
+        // If inside a crossfade gap
         let closest = debugData.time_map.reduce((prev, curr) => Math.abs(curr.output_start - t) < Math.abs(prev.output_start - t) ? curr : prev);
         let offset = t - closest.output_start;
         return closest.original_start + offset;
@@ -738,22 +1033,22 @@ function mapToOriginalTime(t, preferLast) {
 }
 
 function addManualCut() {
-  if (manStart >= manEnd) { alert('Конец должен быть позже старта!'); return; }
+  if (manStart >= manEnd) { alert("End must be after start!"); return; }
   
   const audio = getAudio();
   const d = debugData;
   const processedFile = d && d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
   const encodeProc = processedFile ? encodeURI(processedFile).replace(/#/g, '%23').replace(/\?/g, '%3F') : 'UNMATCHABLE';
   
-  const isProcessed = audio.src && audio.src.includes(encodeProc);
+  const isProcessed = (currentPlayType === 'processed');
   
   let origStart, origEnd;
   if (isProcessed) {
-      // Если слушаем обработанный, пересчитываем таймкоды через таблицу time_map
+      // Map timecodes via time_map for processed file
       origStart = mapToOriginalTime(manStart, false);
       origEnd = mapToOriginalTime(manEnd, true);
   } else {
-      // Если слушаем оригинал, таймкоды уже "оригинальные"
+      // Timecode is already original
       origStart = manStart;
       origEnd = manEnd;
   }
@@ -767,7 +1062,7 @@ function addManualCut() {
     isProcessed: isProcessed
   });
   
-  // Автоматическое слияние пересекающихся вырезов
+  // Auto-merge overlapping cuts
   manualCuts.sort((a,b) => a.start - b.start);
   
   const merged = [];
@@ -775,7 +1070,7 @@ function addManualCut() {
     let current = manualCuts[0];
     for (let i = 1; i < manualCuts.length; i++) {
         let next = manualCuts[i];
-        // Если следующий вырез начинается раньше, чем заканчивается текущий (с небольшим зазором 0.1с для надежности)
+        // Merge overlapping segment
         if (next.start <= current.end + 0.1) {
             current.end = Math.max(current.end, next.end);
             current.procEnd = Math.max(current.procEnd, next.procEnd);
@@ -807,7 +1102,7 @@ function saveManualCuts() {
 function loadSavedData() {
   if (!fileId) return;
   
-  // Загружаем вырезы
+  // Loading saved cuts
   const savedCuts = localStorage.getItem(`cuts_${fileId}`);
   if (savedCuts) {
     manualCuts = JSON.parse(savedCuts);
@@ -817,13 +1112,13 @@ function loadSavedData() {
     renderManualCuts();
   }
 
-  // Предлагаем продолжить
+  // Ask to resume playback
   const savedPos = localStorage.getItem(`pos_${fileId}`);
   const lastType = localStorage.getItem(`last_type_${fileId}`) || 'processed';
   
   if (savedPos) {
     const time = parseFloat(savedPos);
-    // Предлагаем продолжить только если мы не в самом начале (более 2 сек)
+    // Ask to resume playback только если мы не в самом начале (более 2 сек)
     if (time > 2 && confirm(`Найдена сохраненная позиция: ${fmtDur(time)}. Продолжить с этого места?`)) {
       playAudio(lastType, time);
     }
@@ -831,7 +1126,7 @@ function loadSavedData() {
 }
 
 function clearSavedCuts() {
-  if (!confirm('Удалить ВСЕ данные (вырезы и позицию) для ЭТОГО файла из памяти браузера?')) return;
+  if (!confirm('Delete ВСЕ данные (вырезы и позицию) для ЭТОГО файла из памяти браузера?')) return;
   manualCuts = [];
   if (fileId) {
     localStorage.removeItem(`cuts_${fileId}`);
@@ -842,16 +1137,17 @@ function clearSavedCuts() {
 
 function renderManualCuts() {
   const tbody = document.getElementById('manualCutsBody');
+  const t = I18N[currentLang];
   if(manualCuts.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding: 30px;">Нет ручных вырезов</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding: 30px;">${t.noManualCuts}</td></tr>`;
     return;
   }
   tbody.innerHTML = manualCuts.map((c, i) => `
     <tr>
-      <td>${c.isProcessed ? '🎧 Обработка' : '📀 Оригинал'}</td>
+      <td>${c.isProcessed ? t.labelProcessed : t.labelOriginal}</td>
       <td>
-        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'start')" title="Перейти к началу">${fmtDur(c.procStart)}</span> -> 
-        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'end')" title="Перейти к концу">${fmtDur(c.procEnd)}</span>
+        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'start')" title="Go to start">${fmtDur(c.procStart)}</span> -> 
+        <span class="tag tag-keep" style="cursor:pointer" onclick="jumpToCutTime(${i}, 'end')" title="Go to end">${fmtDur(c.procEnd)}</span>
       </td>
       <td><b>${fmtDur(c.start)} -> ${fmtDur(c.end)}</b></td>
       <td><button class="btn btn-accent btn-sm" style="padding: 2px 8px;" onclick="removeManualCut(${i})">X</button></td>
@@ -913,13 +1209,13 @@ function exportManualCuts() {
 async function scanForClicks() {
   const d = debugData;
   if (!d || !d.time_map || d.time_map.length < 2) {
-    alert("Нужно загрузить лог с минимум двумя сегментами.");
+    alert(I18N[currentLang].needMinSegments);
     return;
   }
   
   const processedFile = d.output_file ? d.output_file.split(/[/\\]/).pop() : null;
   if (!processedFile) {
-    alert("Обработанный файл не найден в логе.");
+    alert(I18N[currentLang].processedNotInLog);
     return;
   }
 
@@ -936,22 +1232,23 @@ async function scanForClicks() {
   }
 
   btn.disabled = true;
-  statusEl.innerText = "⏳ Загрузка аудиофайла...";
+  statusEl.innerText = `⏳ ${I18N[currentLang].loadingAudio}`;
   tbody.innerHTML = '';
   tableWrap.style.display = 'none';
 
   try {
     const fileUrl = encodeURI(processedFile).replace(/#/g, '%23').replace(/\?/g, '%3F');
     const response = await fetch(fileUrl);
-    if (!response.ok) throw new Error("Файл не найден.");
+    if (!response.ok) throw new Error(I18N[currentLang].fileNotFound);
     
-    statusEl.innerText = "⏳ Декодирование аудио (подождите)...";
+    statusEl.innerText = `⏳ ${I18N[currentLang].decodingAudio}`;
     const arrayBuffer = await response.arrayBuffer();
     await processAudioBufferForClicks(arrayBuffer, d);
     
   } catch (err) {
     console.warn("Fetch failed, probably CORS or missing file", err);
-    statusEl.innerHTML = `<span style='color: var(--warning);'>Авто-загрузка не удалась. <button class="btn btn-outline btn-sm" onclick="document.getElementById('manualAudioInput').click()">Выберите <b>${processedFile}</b> вручную</button></span>`;
+    const t = I18N[currentLang];
+    statusEl.innerHTML = `<span style='color: var(--warning);'>${t.autoLoadFailed} <button class="btn btn-outline btn-sm" onclick="document.getElementById('manualAudioInput').click()">${t.selectManually} <b>${processedFile}</b></button></span>`;
   } finally {
     btn.disabled = false;
   }
@@ -965,17 +1262,17 @@ async function handleManualAudioUploadForClicks(event, d) {
     const tableWrap = document.getElementById('clicksTableWrapper');
     const tbody = document.getElementById('clicksBody');
     
-    statusEl.innerText = "⏳ Чтение файла в память...";
+    statusEl.innerText = `⏳ ${I18N[currentLang].loadingAudio}`;
     tbody.innerHTML = '';
     tableWrap.style.display = 'none';
     
     const reader = new FileReader();
     reader.onload = async function(e) {
         try {
-            statusEl.innerText = "⏳ Декодирование аудио (подождите)...";
+            statusEl.innerText = `⏳ ${I18N[currentLang].decodingAudio}`;
             await processAudioBufferForClicks(e.target.result, d);
         } catch(err) {
-            statusEl.innerHTML = `<span style='color: var(--accent);'>❌ Ошибка: ${err.message}</span>`;
+            statusEl.innerHTML = `<span style='color: var(--accent);'>❌ ${I18N[currentLang].errorLoading}: ${err.message}</span>`;
             console.error(err);
         }
     };
@@ -993,13 +1290,13 @@ async function processAudioBufferForClicks(arrayBuffer, d) {
     
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
     
-    statusEl.innerText = "🔍 Сканирование стыков...";
+    statusEl.innerText = `🔍 ${I18N[currentLang].scanningJoints}`;
     
-    const channelData = audioBuffer.getChannelData(0); // Анализируем левый канал
+    const channelData = audioBuffer.getChannelData(0); // Analyze left channel
     const sampleRate = audioBuffer.sampleRate;
     
-    const scanWindow = 0.05; // Сканируем 50 мс вокруг стыка
-    const clickThreshold = 0.15; // Порог резкого скачка (от 0 до 1)
+    const scanWindow = 0.05; // Scan 50ms window
+    const clickThreshold = 0.15; // Jump threshold (0.0 to 1.0)
     const foundClicks = [];
     
     for (let i = 0; i < d.time_map.length - 1; i++) {
@@ -1031,10 +1328,11 @@ async function processAudioBufferForClicks(arrayBuffer, d) {
     }
     
     if (foundClicks.length === 0) {
-        statusEl.innerHTML = "<span style='color: var(--success);'>✅ Артефактов не обнаружено! Микс чистый.</span>";
+        statusEl.innerHTML = `<span style='color: var(--success);'>${I18N[currentLang].noArtifacts}</span>`;
     } else {
-        statusEl.innerHTML = `<span style='color: var(--warning);'>⚠️ Найдено подозрительных мест: ${foundClicks.length}</span>`;
+        statusEl.innerHTML = `<span style='color: var(--warning);'>${I18N[currentLang].suspectAreas} ${foundClicks.length}</span>`;
         tableWrap.style.display = 'table';
+        const t = I18N[currentLang];
         tbody.innerHTML = foundClicks.map((c, i) => `
           <tr>
             <td>${i+1}</td>
@@ -1042,7 +1340,7 @@ async function processAudioBufferForClicks(arrayBuffer, d) {
             <td><span class="tag tag-expand">📀 ${fmtDur(c.origTime)}</span></td>
             <td><b>${c.strength.toFixed(3)}</b></td>
             <td>
-              <button class="btn btn-primary btn-sm" onclick="playAudio('processed', ${Math.max(0, c.time - 2)})">▶ За 2с до клика</button>
+              <button class="btn btn-primary btn-sm" onclick="playAudio('processed', ${Math.max(0, c.time - 2)})">${t.btnGoTo}</button>
             </td>
           </tr>
         `).join('');
